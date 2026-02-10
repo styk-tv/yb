@@ -1,0 +1,5 @@
+# Example Agentic Task
+type: "claudedev"
+path: "~/code/ai-experiments"
+zoom: 1
+cmd: "claude dev"

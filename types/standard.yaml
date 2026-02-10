@@ -1,0 +1,11 @@
+# Relaxed look for general tasks
+mode: tile    # tile | splitview | bsp
+bar: standard  # standard | minimal | none
+layout:
+  engine: bsp
+  gap: 12
+  padding_top: 12
+  padding_bottom: 12
+  padding_left: 12
+  padding_right: 12
+  border: on
