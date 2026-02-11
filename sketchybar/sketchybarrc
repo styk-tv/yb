@@ -1,13 +1,3 @@
-# GLOBAL BAR CONFIG
-PLUGIN_DIR="$HOME/.config/styk-tv/yb/sketchybar/plugins"
-
-sketchybar --bar position=top height=32 blur_radius=20 color=0x44000000 corner_radius=10 margin=10 padding_left=10 padding_right=10
-
-# Left Item: Space Name (Registry Label)
-sketchybar --add item space_label left \
-           --set space_label icon="YB" \
-           --set space_label label="SYSTEM" \
-           --set space_label script="$PLUGIN_DIR/space_label.sh" \
-           --subscribe space_label space_change
-
-sketchybar --update
+# YB sketchybar config — intentionally minimal
+# All bar configuration is done by runners/bar.sh at workspace launch time.
+# This file is loaded by sketchybar on startup via symlink from ~/.config/sketchybar/sketchybarrc

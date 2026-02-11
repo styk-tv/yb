@@ -1,0 +1,9 @@
+# Styk-TV main project
+runner: split
+path: ~/code/styk-tv
+display: 4
+bar: none
+gap: 0
+padding: 0,0,0,0
+zoom: 2
+cmd: npm run dev

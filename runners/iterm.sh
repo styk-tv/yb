@@ -1,6 +1,6 @@
 #!/bin/bash
-# FILE: run-iterm.sh — automated iTerm2 launch tester
-# Usage: ./run-iterm.sh [method_number]
+# FILE: runners/iterm.sh
+# iTerm2 automated launch tester — all methods fail on this system, kept for future debugging
 #   no args = run ALL methods automatically and report results
 
 WORK_PATH="${2:-$HOME/git_ckp/mermaid}"

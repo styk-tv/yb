@@ -1,5 +1,0 @@
-# Example Main Project
-type: "omegadev"         # Inherits layout
-path: "~/code/styk-tv"   # Context
-zoom: 2                  # VS Code Zoom
-cmd: "npm run dev"       # Auto-run command

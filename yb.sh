@@ -12,35 +12,52 @@ if [ -z "$1" ]; then
     echo "Usage: yb <target> [display_id]"
     echo "       yb -d <space_label>"
     echo ""
+
+    # --- Services ---
+    YABAI_STATUS="off"; pgrep -q yabai 2>/dev/null && YABAI_STATUS="on"
+    SBAR_STATUS="off"; pgrep -q sketchybar 2>/dev/null && SBAR_STATUS="on"
+    SIP_STATUS=$(csrutil status 2>/dev/null | grep -o "enabled\|disabled" || echo "unknown")
+    printf "  yabai %-8s  sketchybar %-8s  sip %s\n" "$YABAI_STATUS" "$SBAR_STATUS" "$SIP_STATUS"
+    echo ""
+
+    # --- Instances ---
     echo "Instances:"
     for f in "$REPO_ROOT"/instances/*.yaml; do
         [ -f "$f" ] || continue
         name=$(basename "$f" .yaml)
-        type=$(yq -r '.type // "—"' "$f")
+        runner=$(yq -r '.runner // .type // "—"' "$f")
+        display=$(yq -r '.display // "—"' "$f")
+        bar=$(yq -r '.bar // "—"' "$f")
         path=$(yq -r '.path // "—"' "$f")
-        printf "  %-20s type=%-12s path=%s\n" "$name" "$type" "$path"
+        printf "  %-8s %-8s display=%-4s bar=%-10s %s\n" "$name" "$runner" "$display" "$bar" "$path"
     done
     echo ""
+
+    # --- Types ---
     echo "Types:"
     for f in "$REPO_ROOT"/types/*.yaml; do
         [ -f "$f" ] || continue
         name=$(basename "$f" .yaml)
         tmode=$(yq -r '.mode // "tile"' "$f")
         tbar=$(yq -r '.bar // "none"' "$f")
-        gap=$(yq -r '.layout.gap // "—"' "$f")
-        printf "  %-20s mode=%-10s bar=%-10s gap=%s\n" "$name" "$tmode" "$tbar" "$gap"
+        gap=$(yq -r '.layout.gap // 0' "$f")
+        printf "  %-12s mode=%-10s bar=%-10s gap=%s\n" "$name" "$tmode" "$tbar" "$gap"
     done
     echo ""
+
+    # --- Runners ---
+    echo "Runners:"
+    for f in "$REPO_ROOT"/runners/*.sh; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f" .sh)
+        desc=$(sed -n '3s/^# *//p' "$f")
+        printf "  %-12s %s\n" "$name" "$desc"
+    done
+    echo ""
+
+    # --- Displays ---
     echo "Displays:"
-    if DISPLAYS=$(yabai -m query --displays 2>/dev/null); then
-        echo "$DISPLAYS" | jq -r '.[] | [.index, (.frame.w | floor), (.frame.h | floor), (.spaces | length), .["has-focus"]] | @tsv' | \
-        while IFS=$'\t' read -r idx w h spaces focused; do
-            marker=""
-            [ "$focused" = "true" ] && marker=" *"
-            printf "  %-4s %sx%s  spaces=%-4s%s\n" "$idx" "$w" "$h" "$spaces" "$marker"
-        done
-    else
-        ACTIVE_DID=$(osascript -l JavaScript -e '
+    ACTIVE_DID=$(osascript -l JavaScript -e '
 ObjC.import("AppKit");
 var se = Application("System Events");
 var fp = se.processes.whose({frontmost: true})[0];
@@ -64,14 +81,13 @@ for (var i = 0; i < screens.count; i++) {
     }
 }
 result;' 2>/dev/null)
-        system_profiler SPDisplaysDataType -json 2>/dev/null | \
-        jq -r '.SPDisplaysDataType[].spdisplays_ndrvs[]? | [._spdisplays_displayID, ._name, ._spdisplays_pixels] | @tsv' | \
-        while IFS=$'\t' read -r did dname pixels; do
-            marker=""
-            [ "$did" = "$ACTIVE_DID" ] && marker=" *"
-            printf "  %-4s %-24s %s%s\n" "$did" "$dname" "$pixels" "$marker"
-        done
-    fi
+    system_profiler SPDisplaysDataType -json 2>/dev/null | \
+    jq -r '.SPDisplaysDataType[].spdisplays_ndrvs[]? | [._spdisplays_displayID, ._name, ._spdisplays_pixels] | @tsv' | \
+    while IFS=$'\t' read -r did dname pixels; do
+        marker=""
+        [ "$did" = "$ACTIVE_DID" ] && marker=" *"
+        printf "  %-4s %-20s %s%s\n" "$did" "$dname" "$pixels" "$marker"
+    done
     exit 0
 fi
 
@@ -86,34 +102,181 @@ if [ "$1" == "-d" ]; then
 fi
 
 # --- 1. RESOLVE TARGET ---
-# Priority: Instance File > Type File > Heuristic
-
 INSTANCE_FILE="$REPO_ROOT/instances/$TARGET.yaml"
 TYPE_FILE="$REPO_ROOT/types/$TARGET.yaml"
 
+# --- NEW PATH: Instance with runner ---
 if [ -f "$INSTANCE_FILE" ]; then
-    # Case A: Named Instance (Project Specific)
+    RUNNER=$(yq -r '.runner // ""' "$INSTANCE_FILE")
+
+    if [ -n "$RUNNER" ] && [ "$RUNNER" != "null" ]; then
+        # New-style instance — dispatch to runners
+        WORK_PATH=$(yq -r '.path // "."' "$INSTANCE_FILE" | sed "s|~|$HOME|")
+        DISPLAY=$(yq -r ".display // $MONITOR" "$INSTANCE_FILE")
+        [ -n "$2" ] && DISPLAY="$2"  # CLI override
+        BAR_STYLE=$(yq -r '.bar // "none"' "$INSTANCE_FILE")
+        GAP=$(yq -r '.gap // 0' "$INSTANCE_FILE")
+        PADDING=$(yq -r '.padding // "0,0,0,0"' "$INSTANCE_FILE")
+        CMD=$(yq -r '.cmd // ""' "$INSTANCE_FILE")
+        ZOOM=$(yq -r '.zoom // 0' "$INSTANCE_FILE")
+        FOLDER_NAME=$(basename "$WORK_PATH")
+        LABEL=$(echo "$TARGET" | tr '[:lower:]' '[:upper:]')
+
+        echo "=== yb: $TARGET → $RUNNER on display $DISPLAY ==="
+
+        # Step 0: Check if workspace already exists — switch to it instead of creating
+        # Use VS Code CLI to check for exact workspace folder match
+        HAS_WORKSPACE=$(code --status 2>&1 | grep -c "Folder ($FOLDER_NAME):")
+
+        if [ "$HAS_WORKSPACE" -gt 0 ]; then
+            echo "[switch] Workspace '$FOLDER_NAME' is open — locating window"
+
+            # Find the window using precise VS Code title matching:
+            #   title === folderName  OR  title ends with " — folderName"
+            # Then determine which display it's on and focus that display
+            SWITCH_RESULT=$(osascript -l JavaScript \
+                -e "var folderName = '$FOLDER_NAME';" \
+                -e '
+ObjC.import("AppKit");
+ObjC.import("CoreGraphics");
+
+var dashSep = " \u2014 "; // VS Code uses em dash
+var se = Application("System Events");
+var codeProc = se.processes.byName("Code");
+if (!codeProc.exists()) { "none"; }
+else {
+    var targetWin = null;
+    for (var i = 0; i < codeProc.windows.length; i++) {
+        var t = codeProc.windows[i].title();
+        if (t === folderName || t.endsWith(dashSep + folderName)) {
+            targetWin = codeProc.windows[i];
+            break;
+        }
+    }
+    if (!targetWin) { "none"; }
+    else {
+        var pos = targetWin.position();
+        var wx = pos[0], wy = pos[1];
+
+        var screens = $.NSScreen.screens;
+        var primaryH = 0;
+        for (var i = 0; i < screens.count; i++) {
+            var f = screens.objectAtIndex(i).frame;
+            if (f.origin.x === 0 && f.origin.y === 0) { primaryH = f.size.height; break; }
+        }
+
+        var targetDID = -1;
+        var cx = 0, cy = 0;
+        for (var i = 0; i < screens.count; i++) {
+            var s = screens.objectAtIndex(i);
+            var f = s.frame;
+            var seY = primaryH - f.origin.y - f.size.height;
+            if (wx >= f.origin.x && wx < f.origin.x + f.size.width &&
+                wy >= seY && wy < seY + f.size.height) {
+                targetDID = ObjC.unwrap(s.deviceDescription.objectForKey("NSScreenNumber"));
+                cx = f.origin.x + f.size.width / 2;
+                cy = primaryH - f.origin.y - f.size.height + f.size.height / 2;
+                break;
+            }
+        }
+
+        if (targetDID === -1) { "none"; }
+        else {
+            // Move mouse to display center and click to focus
+            var point = $.CGPointMake(cx, cy);
+            var moveEvt = $.CGEventCreateMouseEvent($(), $.kCGEventMouseMoved, point, $.kCGMouseButtonLeft);
+            $.CGEventPost($.kCGHIDEventTap, moveEvt);
+            delay(0.1);
+            var down = $.CGEventCreateMouseEvent($(), $.kCGEventLeftMouseDown, point, $.kCGMouseButtonLeft);
+            var up = $.CGEventCreateMouseEvent($(), $.kCGEventLeftMouseUp, point, $.kCGMouseButtonLeft);
+            $.CGEventPost($.kCGHIDEventTap, down);
+            delay(0.05);
+            $.CGEventPost($.kCGHIDEventTap, up);
+
+            "found:" + targetDID;
+        }
+    }
+}' 2>/dev/null)
+
+            if [[ "$SWITCH_RESULT" == found:* ]]; then
+                FOUND_DISPLAY="${SWITCH_RESULT#found:}"
+                echo "[switch] Window on display $FOUND_DISPLAY — activating"
+                open -a "Visual Studio Code" "$WORK_PATH"
+                sleep 1
+
+                # Re-tile windows with correct padding for bar
+                echo ""
+                TILE_ARGS="--display $DISPLAY --path $WORK_PATH"
+                [ "$GAP" != "0" ] && TILE_ARGS="$TILE_ARGS --gap $GAP"
+                [ "$PADDING" != "0,0,0,0" ] && TILE_ARGS="$TILE_ARGS --pad $PADDING"
+                "$REPO_ROOT/runners/tile.sh" $TILE_ARGS
+
+                # Update bar label
+                echo ""
+                "$REPO_ROOT/runners/bar.sh" --display "$DISPLAY" --style "$BAR_STYLE" --label "$LABEL" --path "$WORK_PATH"
+
+                echo ""
+                echo "=== Switched: $LABEL ==="
+                exit 0
+            else
+                echo "[switch] Workspace open but window not found — creating new"
+            fi
+        fi
+
+        # Step 1: Create new virtual desktop
+        echo ""
+        "$REPO_ROOT/runners/space.sh" --create --display "$DISPLAY"
+
+        # Step 2: Launch + position apps
+        echo ""
+        RUNNER_SCRIPT="$REPO_ROOT/runners/$RUNNER.sh"
+        if [ ! -f "$RUNNER_SCRIPT" ]; then
+            echo "Runner '$RUNNER' not found at $RUNNER_SCRIPT"
+            exit 1
+        fi
+        RUNNER_ARGS="--display $DISPLAY --path $WORK_PATH"
+        [ -n "$CMD" ] && [ "$CMD" != "null" ] && RUNNER_ARGS="$RUNNER_ARGS --cmd $CMD"
+        [ "$GAP" != "0" ] && RUNNER_ARGS="$RUNNER_ARGS --gap $GAP"
+        [ "$PADDING" != "0,0,0,0" ] && RUNNER_ARGS="$RUNNER_ARGS --pad $PADDING"
+        "$RUNNER_SCRIPT" $RUNNER_ARGS
+
+        # Step 3: Configure bar
+        echo ""
+        "$REPO_ROOT/runners/bar.sh" --display "$DISPLAY" --style "$BAR_STYLE" --label "$LABEL" --path "$WORK_PATH"
+
+        # Step 4: Zoom
+        if [ "$ZOOM" != "null" ] && [ "$ZOOM" -gt 0 ] 2>/dev/null; then
+            echo ""
+            echo "[zoom]  +$ZOOM"
+            sleep 0.5
+            osascript -e "tell application \"System Events\" to tell process \"Code\"" \
+                      -e "repeat $ZOOM times" \
+                      -e "keystroke \"=\" using {command down}" \
+                      -e "end repeat" \
+                      -e "end tell"
+        fi
+
+        echo ""
+        echo "=== Ready: $LABEL ==="
+        exit 0
+    fi
+
+    # Old-style instance (has type: field) — fall through to legacy path
     TYPE_NAME=$(yq '.type' "$INSTANCE_FILE")
     WORK_PATH=$(yq '.path' "$INSTANCE_FILE" | sed "s|~|$HOME|")
     CMD=$(yq '.cmd' "$INSTANCE_FILE")
     ZOOM=$(yq '.zoom' "$INSTANCE_FILE")
-    # Default to CWD if path is null
     [ "$WORK_PATH" == "null" ] && WORK_PATH="$CWD"
 
 elif [ -f "$TYPE_FILE" ]; then
-    # Case B: Ad-Hoc Type (Generic Layout applied to CWD)
     TYPE_NAME=$TARGET
     WORK_PATH="$CWD"
     CMD=""
     ZOOM=0
 
 else
-    # Case C: Fallback / Heuristic
-    echo "Unknown target. Defaulting to OmegaDev..."
-    TYPE_NAME="omegadev"
-    WORK_PATH="$CWD"
-    CMD=""
-    ZOOM=0
+    echo "Unknown target: $TARGET"
+    exit 1
 fi
 
 # Load Layout Rules from the Type Definition
@@ -326,18 +489,8 @@ if (tProc.exists()) {
 fi
 
 # --- 5. BAR ---
-BAR_SCRIPT="$REPO_ROOT/sketchybar/bars/$BAR.sh"
-if [ "$BAR" != "none" ] && [ -f "$BAR_SCRIPT" ]; then
-    # Start sketchybar if not running
-    if ! pgrep -q sketchybar 2>/dev/null; then
-        brew services start sketchybar 2>/dev/null
-        sleep 1
-    fi
-    "$BAR_SCRIPT" "$MONITOR" "$SPACE_LABEL"
-elif [ "$BAR" = "none" ]; then
-    # Hide bar for this type
-    sketchybar --bar hidden=on 2>/dev/null
-fi
+echo ""
+"$REPO_ROOT/runners/bar.sh" --display "$MONITOR" --style "$BAR" --label "$SPACE_LABEL" --path "$WORK_PATH"
 
 # --- 6. ZOOM ---
 if [ "$ZOOM" != "null" ] && [ "$ZOOM" -gt 0 ] 2>/dev/null; then
