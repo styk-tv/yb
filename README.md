@@ -9,7 +9,7 @@
 ![yabai](https://img.shields.io/badge/yabai-integrated-yellow)
 ![sketchybar](https://img.shields.io/badge/sketchybar-integrated-orange)
 
-One command spawns a full development workspace &mdash; VS Code + iTerm2 tiled on a target display, on its own virtual desktop, with a labeled status bar. YAML-driven config, no SIP modification required.
+One command spawns a full development workspace &mdash; VS Code + iTerm2 tiled via yabai BSP on a target display, on its own virtual desktop, with a labeled status bar. YAML-driven config, multiple concurrent workspaces, no SIP modification required.
 
 ---
 
@@ -51,7 +51,7 @@ path: ~/git_ckp/mermaid
 display: 4
 bar: standard
 gap: 0
-padding: 52,0,0,0
+padding: 0,0,0,0
 zoom: 0
 cmd: null
 ```
@@ -74,30 +74,32 @@ yb mm 3
 
 YB reads the instance, then runs each piece in sequence:
 
-1. Checks if workspace `mm` is already open &mdash; if so, switches to it (re-tiles windows, updates bar)
+1. Checks if workspace `mm` is already open &mdash; if so, switches to it (refreshes bar, ensures secondary app)
 2. `runners/space.sh` &mdash; finds or creates an empty virtual desktop on display 3
-3. Opens VS Code + iTerm2 (based on `terminal:` field)
-4. `runners/tile.sh` &mdash; positions windows side-by-side using yabai (JXA fallback)
-5. Writes command to iTerm2 session
-6. `runners/bar.sh` &mdash; configures SketchyBar with label **MM**, workspace path, and action icons
-7. Applies zoom level if configured
+3. Configures yabai BSP on the new space (padding, gap, bar height)
+4. `runners/bar.sh` &mdash; configures SketchyBar with namespaced items (e.g., **MM_badge**, **MM_label**)
+5. Opens VS Code + iTerm2 via app handlers (`lib/app/*.sh`) &mdash; yabai auto-tiles them
+6. Moves windows to correct space if they landed elsewhere
+7. Enforces window order (primary left, secondary right) &mdash; swaps if needed
+8. Applies zoom level if configured
 
 ```
-=== yb: mm → iterm/tile on display 3 ===
-
-[space] Found empty desktop on display 3 (delta=-2) — reusing
-[12:34:56.78] opening VS Code → /Users/you/git_ckp/mermaid
-[12:34:56.90] opening iTerm2
-[12:34:59.12] Code window 'mermaid' found (poll 1)
-[12:34:59.20] tile: left=726,-1440 1720x1440  right=2446,-1440 1720x1440
-[12:34:59.30] tile: Code wid=37021 → 726,-1440 1720x1440
-[12:34:59.40] tile: terminal wid=37023 → 2446,-1440 1720x1440
-[bar]   style=standard display=3->sbar=2 label=MM path=~/git_ckp/mermaid
+=== yb: mm → code+iterm/tile on display 3 ===
+[12:34:56.78] config: bar=standard bar_h=52 gap=0 pad=0,0,0,0
+[12:34:56.80] step1: creating desktop on display=3
+[12:34:57.00] step1: space=8 is empty — using it
+[12:34:57.10] step1b: bar style=standard display=3 space=8
+[bar][12:34:57.20] prefix=MM
+[bar][12:34:57.50] items bound + updated
+[12:34:57.60] step2: opening code + iterm
+[12:35:00.80] step3: primary wid=37021 found (poll 1)
+[12:35:00.90] step4: secondary wid=37023 (space=8)
+[12:35:01.00] step5: order correct (primary left, secondary right)
 
 === Ready: MM ===
 ```
 
-Each runner is a standalone script &mdash; `bar.sh` knows nothing about `tile.sh`, and `space.sh` knows nothing about either. YB is the orchestrator that wires them together based on your YAML.
+App handlers (`lib/app/code.sh`, `lib/app/iterm.sh`, etc.) provide open/find/close/focus/locate per app. The orchestrator contains zero app-specific code.
 
 ---
 
@@ -270,7 +272,7 @@ path: ~/git_ckp/mermaid
 display: 4
 bar: standard
 gap: 0
-padding: 52,0,0,0
+padding: 0,0,0,0
 zoom: 0
 cmd: null
 ```
@@ -332,15 +334,15 @@ layout:
 | `layout.gap` | int | Pixel gap between windows |
 | `layout.padding_*` | int | Edge padding (top, bottom, left, right) |
 
-When an instance uses `layout:`, bar height is auto-added to top padding (52px for standard, 34px for minimal).
+When an instance uses `layout:`, bar height is auto-added to top padding (queried from the bar script via `--height`).
 
 ### Layout modes
 
 | Mode | Description |
 |---|---|
-| `tile` | Yabai float + move + resize (falls back to JXA coordinate positioning) |
+| `tile` | Yabai BSP &mdash; two windows auto-tiled side-by-side |
+| `solo` | Yabai BSP &mdash; single app fills the space |
 | `splitview` | macOS native Split View via AppleScript + CG mouse events |
-| `solo` | Single app fullscreen on target display |
 
 ### Included layouts
 
@@ -355,22 +357,36 @@ When an instance uses `layout:`, bar height is auto-added to top padding (52px f
 
 ## Shared library
 
-`lib/common.sh` provides shared functions used by runners, `yb.sh`, and plugins. It handles yabai-vs-JXA decisions internally so callers don't contain fallback logic.
+`lib/common.sh` provides shared functions used by runners, `yb.sh`, and plugins. Handles yabai-vs-JXA decisions internally.
 
 | Function | Purpose |
 |---|---|
 | `yb_ts` | Timestamp (HH:MM:SS.mmm) |
 | `yb_log` | Timestamped log output |
 | `yb_yabai_ok` | Check yabai availability (memoized) |
+| `yb_bar_height $style` | Query bar script for its padding reservation |
+| `yb_visible_space $did` | Get visible space index on a display (CGDirectDisplayID) |
+| `yb_space_bsp $space $gap ...` | Configure yabai space for BSP (padding + gap + bar height) |
+| `yb_window_space $wid` | Get space index for a window |
+| `yb_snapshot_wids $app` | Snapshot window IDs for delta tracking |
+| `yb_find_new_wid $app $snap` | Find new window since snapshot |
 | `yb_display_frame $did` | Display geometry as X:Y:W:H (yabai or JXA) |
-| `yb_tile_geometry $frame ...` | Compute left/right tile coordinates (exports YB_X0 etc.) |
-| `yb_find_code $folder` | Find VS Code window by folder name |
-| `yb_find_iterm $path` | Find iTerm2 window by session working directory |
-| `yb_find_terminal $folder` | Find Terminal.app window by title |
-| `yb_position $wid $x $y $w $h` | Position window (yabai float+move+resize or JXA) |
-| `yb_close_code $folder` | Close VS Code window |
-| `yb_close_iterm $path` | Close iTerm2 window by session path |
-| `yb_close_terminal $folder` | Close Terminal.app window by title |
+| `yb_position $wid $x $y $w $h` | Position window (yabai or JXA; used by splitview fallback) |
+
+### App handlers (`lib/app/*.sh`)
+
+Each app module provides a standard interface:
+
+| Function | Purpose |
+|---|---|
+| `app_<name>_open $path [$cmd]` | Launch the app with workspace path |
+| `app_<name>_find $path [$space]` | Find window ID (optionally filtered by space) |
+| `app_<name>_close $path` | Close the app's workspace window |
+| `app_<name>_is_open $path` | Check if workspace is open (exit 0/1) |
+| `app_<name>_focus $path` | Focus/activate an existing window |
+| `app_<name>_locate $path` | Find window and return which display it's on |
+
+Available handlers: `code` (VS Code), `iterm` (iTerm2), `terminal` (Terminal.app).
 
 `lib/display_frame.jxa` is a standalone JXA script for display geometry when yabai is unavailable.
 
@@ -378,27 +394,7 @@ When an instance uses `layout:`, bar height is auto-added to top padding (52px f
 
 ## Runners
 
-Scripts in `runners/` handle specific workspace actions. Each runner is a standalone script invoked by `yb.sh`. Runners are **layout-only** &mdash; they find and position existing windows. App opening is handled by `yb.sh`.
-
-### `tile`
-
-Finds existing VS Code + terminal windows and tiles them side-by-side on a target display.
-
-```bash
-./runners/tile.sh --display 3 --path ~/project [--gap 12] [--pad 12,12,12,12]
-```
-
-- Uses `lib/common.sh` for window finding and positioning
-- Finds Code by folder name, iTerm2 by session path, Terminal by title
-- Yabai positioning with JXA fallback (handled transparently by library)
-
-### `solo`
-
-Positions a single VS Code window fullscreen on a target display.
-
-```bash
-./runners/solo.sh --display 3 --path ~/project [--pad 0,0,0,0]
-```
+Scripts in `runners/` handle infrastructure actions invoked by `yb.sh`. Window layout is managed by yabai BSP; app opening is handled by app handlers in `lib/app/`.
 
 ### `space`
 
@@ -418,15 +414,20 @@ Creates or lists virtual desktops via Mission Control. Works with SIP enabled.
 
 ### `bar`
 
-Configures SketchyBar for a workspace on a specific display.
+Configures SketchyBar for a workspace on a specific display. Items are namespaced per workspace.
 
 ```bash
-./runners/bar.sh --style standard --display 3 --label "MM" --path ~/git_ckp/mermaid
+./runners/bar.sh --style standard --display 3 --label "MM" --path ~/git_ckp/mermaid --space 8
 ```
 
-- **Probe-based display targeting** &mdash; resolves SketchyBar display index via bounding_rects + CG coordinate matching
-- **Space binding** &mdash; resolves display UUID, reads `com.apple.spaces` plist, sets `associated_space` on all items
+- **Display resolution** &mdash; CGDirectDisplayID converted to yabai display index for sketchybar
+- **Namespace prefix** &mdash; label (e.g., MM) used as item prefix: `MM_badge`, `MM_label`, `MM_path`, `MM_close`, etc.
+- **Space binding** &mdash; all namespaced items bound to specific space via `associated_space`
 - Delegates to style scripts in `sketchybar/bars/`
+
+### `tile` / `solo` (legacy)
+
+Manual positioning runners from pre-BSP architecture. Kept for splitview fallback but no longer called in the `tile` or `solo` BSP path.
 
 ---
 
@@ -455,13 +456,13 @@ Three bar styles, configured per-instance or per-layout via the `bar:` YAML fiel
 - **Right**: Action icons using Hack Nerd Font glyphs
 - **Close button**: Clicking X closes VS Code (by title match), iTerm2 (by session path), Terminal (by title), removes bar items, hides bar. Uses `lib/common.sh` close functions.
 
+### Namespaced items
+
+Each workspace's bar items are prefixed with its label (e.g., `PUFF_badge`, `ONTOSYS_label`). This allows multiple workspaces to have independent bar items, each bound to their own space via `associated_space`. The close button extracts the prefix from `$NAME` to find the correct path item and remove only that workspace's items.
+
 ### Display targeting
 
-SketchyBar's display index doesn't match NSScreen order or CGDirectDisplayID. The `bar.sh` runner uses a probe-based approach to resolve the correct display.
-
-### Space-aware items
-
-Bar items are bound to a specific Mission Control space via `associated_space` so they only appear on the YB-managed desktop.
+CGDirectDisplayID is converted to yabai display index via `yabai -m query --displays` for sketchybar display pinning.
 
 ### Config files
 
@@ -489,29 +490,30 @@ When yabai is running, display frames come from `yabai -m query --displays` (mat
 When `yb <instance>` is called for an already-open workspace:
 
 1. **Detection** &mdash; `code --status` checks for exact `Folder (<name>):` match
-2. **Window lookup** &mdash; JXA finds the Code window by precise title match
+2. **Window lookup** &mdash; JXA locate finds the window and its display; if hidden space, focuses app first and retries
 3. **Display check** &mdash; determines which display the window is on
+4. **Shared-space check** &mdash; counts non-sticky windows on the space; if more than expected (another workspace's windows), closes stale and rebuilds
 
 **Same display** (refresh):
-- `open -a "Visual Studio Code"` brings the window to front
-- `runners/tile.sh` repositions windows via library
-- `runners/bar.sh` recreates any missing items
+- Re-applies BSP config and bar
+- Focuses primary app
+- Ensures secondary app is on the same space (finds, moves, or opens)
 
 **Different display** (migration):
-- Closes VS Code, iTerm2, Terminal via `lib/common.sh` close functions
-- Removes bar items
+- Closes VS Code, iTerm2, Terminal via app handler close functions
+- Removes namespaced bar items
 - Falls through to fresh creation on the new display
 
 ---
 
 ## Yabai integration
 
-YB uses yabai in two ways:
+YB uses yabai BSP tiling for workspace layout:
 
-1. **Window tracking** (SIP enabled) &mdash; `yabai -m query --windows` provides stable window IDs, space indices, and display indices
-2. **Window positioning** (SIP enabled) &mdash; `yabai -m window --toggle float` + `--move abs:x:y` + `--resize abs:w:h`
-
-All yabai interactions go through `lib/common.sh` which falls back to JXA when yabai is unavailable.
+1. **BSP tiling** &mdash; `yabai -m config --space N layout bsp` with per-space padding and gap; windows auto-tile as they open
+2. **Window tracking** &mdash; `yabai -m query --windows` provides stable window IDs, space indices, and display indices
+3. **Window management** &mdash; `yabai -m window --space` moves windows between spaces, `--swap` enforces window order
+4. **Space queries** &mdash; `yabai -m query --spaces` resolves visible space per display, validates window counts
 
 **Service management** &mdash; `yb.sh` ensures yabai and sketchybar are running before any workspace launch. If a service is down, it starts it automatically.
 
@@ -540,11 +542,14 @@ yb/
 ├── yb.sh                         # CLI entrypoint + orchestrator
 ├── setup.sh                      # Install deps, symlink configs
 ├── CHANGELOG.md
-├── PLAN.v0.4.0.md
 ├── .gitignore
-├── lib/                          # Shared library
-│   ├── common.sh                 # Window finding, positioning, display, close
-│   └── display_frame.jxa         # JXA display geometry fallback
+├── lib/                          # Shared library + app handlers
+│   ├── common.sh                 # BSP config, space queries, display, positioning
+│   ├── display_frame.jxa         # JXA display geometry fallback
+│   └── app/                      # Per-app open/find/close/focus/locate
+│       ├── code.sh               # Visual Studio Code
+│       ├── iterm.sh              # iTerm2
+│       └── terminal.sh           # Terminal.app
 ├── instances/                    # Workspace definitions
 │   ├── ai.yaml
 │   ├── claude.yaml
@@ -557,20 +562,20 @@ yb/
 │   ├── omegadev.yaml
 │   ├── splitdev.yaml
 │   └── standard.yaml
-├── runners/                      # Layout + action scripts
-│   ├── tile.sh                   # Tile Code + terminal side-by-side
-│   ├── solo.sh                   # Single app fullscreen
+├── runners/                      # Infrastructure scripts
 │   ├── space.sh                  # Virtual desktop management
-│   └── bar.sh                    # SketchyBar orchestrator
+│   ├── bar.sh                    # SketchyBar orchestrator (namespaced)
+│   ├── tile.sh                   # Legacy: manual tile positioning
+│   └── solo.sh                   # Legacy: manual solo positioning
 ├── sketchybar/
 │   ├── sketchybarrc              # Global config (empty, all via bar.sh)
 │   ├── bars/
-│   │   ├── standard.sh           # Blur, rounded, badge + icons
-│   │   ├── minimal.sh            # Thin, flat, name + path
-│   │   └── none.sh               # Hidden
+│   │   ├── standard.sh           # Dark bar, badge + icons (52px)
+│   │   ├── minimal.sh            # Thin, flat, name + path (34px)
+│   │   └── none.sh               # Hidden (0px)
 │   └── plugins/
 │       ├── icon_hover.sh         # Mouse hover highlight effect
-│       └── action_close.sh       # Close workspace on X click
+│       └── action_close.sh       # Close workspace on X click (namespaced)
 └── yabai/
     └── config.yabairc            # Window manager defaults
 ```
@@ -580,26 +585,31 @@ yb/
 ## Architecture
 
 ```
-Instance YAML          Layout YAML           Library
+Instance YAML          Layout YAML           App Handlers
 ┌──────────┐          ┌──────────┐         ┌──────────────┐
-│ path     │─layout──▶│ terminal │         │ lib/common.sh│
-│ display  │          │ mode     │         │              │
-│ (overrides)│        │ cmd      │         │ yb_find_*()  │
-└──────────┘          │ bar      │         │ yb_position()│
-                      │ zoom     │         │ yb_close_*() │
-                      │ layout:  │         │ yb_display_* │
-                      └──────────┘         └──────┬───────┘
-                                                  │
+│ path     │─layout──▶│ terminal │         │ lib/app/     │
+│ display  │          │ mode     │         │  code.sh     │
+│ (overrides)│        │ cmd      │         │  iterm.sh    │
+└──────────┘          │ bar      │         │  terminal.sh │
+                      │ zoom     │         └──────┬───────┘
+                      │ layout:  │                │
+                      └──────────┘         lib/common.sh
+                                           ┌──────┴───────┐
+                                           │ yb_space_bsp │
+                                           │ yb_bar_height│
+                                           │ yb_visible_* │
+                                           └──────┬───────┘
 yb.sh (orchestrator)                              │
 ┌─────────────────────────────────────────────────┤
-│ 1. Resolve instance + layout                    │
-│ 2. space.sh → create virtual desktop            │
-│ 3. Open apps (VS Code + terminal)               │
-│ 4. Wait for windows                             │
-│ 5. runners/tile.sh or solo.sh ◀─────── uses ───┘
-│ 6. Write cmd to terminal
-│ 7. runners/bar.sh → SketchyBar
-│ 8. Zoom
+│ 1.  Resolve instance + layout                   │
+│ 1a. space.sh → create virtual desktop           │
+│ 1b. yb_space_bsp → configure BSP     ◀── uses ─┘
+│ 1c. bar.sh → namespaced SketchyBar items
+│ 2.  Open apps via handlers (BSP auto-tiles)
+│ 3.  Poll for primary window
+│ 4.  Find/move secondary window
+│ 5.  Enforce window order (swap if needed)
+│ 6.  Post-setup (zoom)
 └─────────────────────────────────────────────────┘
 ```
 
@@ -607,7 +617,10 @@ yb.sh (orchestrator)                              │
 
 ## Known issues
 
-- **macOS Spaces** &mdash; Windows opened with `open -n` may land on different spaces. YB works around this with space creation + navigation but can't guarantee same-space placement with SIP enabled.
+- **macOS Spaces** &mdash; Windows opened with `open -n` may land on different spaces. YB mitigates with Step 4b (window-to-space migration via `yabai -m window --space`).
+- **SketchyBar single bar** &mdash; One sketchybar process = one bar configuration. Multiple workspaces share the global bar settings (height, position, color). Items are independent via namespacing.
+- **JXA hidden spaces** &mdash; System Events can't see windows on non-visible macOS spaces. YB works around this by focusing the app first and retrying locate.
+- **Space plist staleness** &mdash; `com.apple.spaces` plist can be stale after yabai window moves. YB validates via yabai window count after space.sh returns.
 - **Space renaming** &mdash; macOS stores space names in WindowServer internals, not in any writable plist. SketchyBar labels are used instead.
-- **Mission Control** &mdash; Space creation opens Mission Control which steals focus. Cannot be run from within a tool that requires foreground access.
+- **Mission Control** &mdash; Space creation opens Mission Control which steals focus.
 - **Bash 3.2** &mdash; macOS ships bash 3.2 which doesn't support `\u` Unicode escapes. Nerd Font icons are generated via `python3 -c "print('\ue7a8',end='')"`.

@@ -5,6 +5,6 @@ path: ~/code/ai-experiments
 display: 4
 bar: minimal
 gap: 0
-padding: 34,0,0,0
+padding: 0,0,0,0
 zoom: 1
 cmd: claude dev

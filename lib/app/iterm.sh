@@ -20,6 +20,11 @@ app_iterm_open() {
     fi
 
     yb_log "opening iTerm2 → $work_path"
+
+    # Snapshot existing iTerm2 windows BEFORE creating the new one
+    local _pre_wids
+    _pre_wids=$(yb_snapshot_wids "iTerm2")
+
     osascript \
         -e "set cmd to \"$iterm_cmd\"" \
         -e 'tell application "iTerm"' \
@@ -33,11 +38,17 @@ app_iterm_open() {
         -e 'end tell' 2>/dev/null
     yb_log "iTerm2 window created + command: $iterm_cmd"
 
-    # Capture the new window's yabai ID (iTerm2 is focused after create)
+    # Capture the new window by diffing against pre-snapshot (works regardless of focus/space)
     YB_LAST_OPENED_WID=""
     sleep 0.3
-    YB_LAST_OPENED_WID=$(yabai -m query --windows --window 2>/dev/null | jq -r 'select(.app == "iTerm2") | .id // empty')
-    [ -n "$YB_LAST_OPENED_WID" ] && yb_log "iTerm2 captured wid=$YB_LAST_OPENED_WID"
+    YB_LAST_OPENED_WID=$(yb_find_new_wid "iTerm2" "$_pre_wids")
+    if [ -n "$YB_LAST_OPENED_WID" ]; then
+        yb_log "iTerm2 captured wid=$YB_LAST_OPENED_WID (snapshot delta)"
+    else
+        # Fallback: try focused window query
+        YB_LAST_OPENED_WID=$(yabai -m query --windows --window 2>/dev/null | jq -r 'select(.app == "iTerm2") | .id // empty')
+        [ -n "$YB_LAST_OPENED_WID" ] && yb_log "iTerm2 captured wid=$YB_LAST_OPENED_WID (focused fallback)"
+    fi
 }
 
 # Find iTerm2 window. Optionally filter by yabai space index.
@@ -50,8 +61,34 @@ app_iterm_find() {
             yabai -m query --windows | jq -r --argjson sp "$hint_space" \
                 '.[] | select(.app == "iTerm2") | select(.space == $sp) | .id' | head -1
         else
-            yabai -m query --windows | jq -r \
-                '.[] | select(.app == "iTerm2") | .id' | head -1
+            # Global search: match by session.path via AppleScript,
+            # then resolve to yabai wid via window position
+            local _match_pos
+            _match_pos=$(osascript \
+                -e "set targetPath to \"$work_path\"" \
+                -e 'tell application "iTerm"' \
+                -e '    repeat with w in windows' \
+                -e '        try' \
+                -e '            tell current session of w' \
+                -e '                set p to (variable named "session.path")' \
+                -e '                if p ends with "/" then set p to text 1 thru -2 of p' \
+                -e '                if p is equal to targetPath then' \
+                -e '                    set wpos to position of w' \
+                -e '                    return ((item 1 of wpos) as text) & "," & ((item 2 of wpos) as text)' \
+                -e '                end if' \
+                -e '            end tell' \
+                -e '        end try' \
+                -e '    end repeat' \
+                -e '    return ""' \
+                -e 'end tell' 2>/dev/null)
+            if [ -n "$_match_pos" ]; then
+                IFS=',' read -r _mx _my <<< "$_match_pos"
+                yabai -m query --windows | jq -r \
+                    --argjson mx "${_mx}" --argjson my "${_my}" \
+                    '.[] | select(.app == "iTerm2") |
+                     select((.frame.x | floor) == ($mx | floor) and (.frame.y | floor) == ($my | floor)) |
+                     .id' | head -1
+            fi
         fi
     else
         # JXA fallback: match by session.path

@@ -31,6 +31,111 @@ yb_yabai_ok() {
     [ "$_YB_YABAI" = "yes" ]
 }
 
+# --- Bar height ---
+
+# Query a bar script for its padding reservation height.
+# $1=style name (standard, minimal, none)
+yb_bar_height() {
+    local style="$1"
+    local script="$YB_ROOT/sketchybar/bars/$style.sh"
+    if [ "$style" = "none" ] || [ ! -f "$script" ]; then
+        echo 0
+    else
+        "$script" --height
+    fi
+}
+
+# --- BSP space configuration ---
+
+# Get the visible space index on a display (by CGDirectDisplayID).
+# $1=display_id → prints space index
+yb_visible_space() {
+    local did="$1"
+    local disp_idx
+    disp_idx=$(yabai -m query --displays | jq -r --argjson did "$did" \
+        '.[] | select(.id == $did) | .index')
+    [ -z "$disp_idx" ] && return 1
+    yabai -m query --spaces | jq -r --argjson di "$disp_idx" \
+        '.[] | select(.display == $di and .["is-visible"] == true) | .index'
+}
+
+# Configure a yabai space for BSP tiling.
+# $1=space_index $2=gap $3=padT $4=padB $5=padL $6=padR $7=bar_height
+yb_space_bsp() {
+    local space="$1" gap="${2:-0}"
+    local padT="${3:-0}" padB="${4:-0}" padL="${5:-0}" padR="${6:-0}"
+    local bar_h="${7:-0}"
+    local top=$((padT + bar_h))
+    yb_log "space-bsp: space=$space gap=$gap pad=${top},$padB,$padL,$padR (bar=$bar_h)"
+
+    # Ensure sketchybar is excluded from tiling
+    yabai -m rule --add app="^sketchybar$" manage=off 2>/dev/null
+
+    yabai -m config --space "$space" layout bsp
+    yabai -m config --space "$space" top_padding "$top"
+    yabai -m config --space "$space" bottom_padding "$padB"
+    yabai -m config --space "$space" left_padding "$padL"
+    yabai -m config --space "$space" right_padding "$padR"
+    yabai -m config --space "$space" window_gap "$gap"
+
+    # Verify
+    local actual_top
+    actual_top=$(yabai -m config --space "$space" top_padding 2>/dev/null)
+    yb_log "space-bsp: verified top_padding=$actual_top"
+}
+
+# --- Bar item rebinding (after space creation may renumber indices) ---
+
+# Rebind stale sketchybar items for other workspaces.
+# Space creation can shift indices, breaking associated_space bindings.
+# $1=current_label (skip self — we're about to bind this one fresh)
+yb_rebind_stale_items() {
+    local current_label="$1"
+    local _inst_dir="$YB_ROOT/instances"
+    [ -d "$_inst_dir" ] || return 0
+
+    for _inst_file in "$_inst_dir"/*.yaml; do
+        [ -f "$_inst_file" ] || continue
+        local _inst_name=$(basename "$_inst_file" .yaml)
+        local _inst_label=$(echo "$_inst_name" | tr '[:lower:]' '[:upper:]')
+        [ "$_inst_label" = "$current_label" ] && continue
+
+        # Check if this instance has bar items (fast: query badge item)
+        local _badge_json=$(sketchybar --query "${_inst_label}_badge" 2>/dev/null)
+        if [ -z "$_badge_json" ] || echo "$_badge_json" | grep -q "not found"; then
+            continue  # no items for this instance
+        fi
+
+        # Get current associated_space from bitmask (2^N = space N)
+        local _mask=$(echo "$_badge_json" | jq -r '.geometry.associated_space_mask // 0' 2>/dev/null)
+        local _bound_space=""
+        if [ -n "$_mask" ] && [ "$_mask" -gt 0 ] 2>/dev/null; then
+            local _b=$_mask _n=0
+            while [ "$_b" -gt 1 ]; do _b=$((_b / 2)); _n=$((_n + 1)); done
+            _bound_space="$_n"
+        fi
+
+        # Find the instance's Code window via yabai (by title matching folder name)
+        local _inst_path=$(yq -r '.path // ""' "$_inst_file" | sed "s|~|$HOME|")
+        [ -z "$_inst_path" ] || [ "$_inst_path" = "null" ] && continue
+        local _inst_folder=$(basename "$_inst_path")
+
+        local _wid=$(yabai -m query --windows 2>/dev/null | jq -r --arg fn "$_inst_folder" \
+            '.[] | select(.app == "Code") | select(.title == $fn or (.title | endswith(" \u2014 " + $fn))) | .id' | head -1)
+        [ -z "$_wid" ] && continue
+
+        local _actual_space=$(yabai -m query --windows --window "$_wid" 2>/dev/null | jq -r '.space')
+
+        if [ -n "$_actual_space" ] && [ "$_actual_space" != "$_bound_space" ]; then
+            yb_log "rebind: $_inst_label items space=$_bound_space → space=$_actual_space (index shifted)"
+            for _sfx in badge label path code term folder close; do
+                sketchybar --set "${_inst_label}_${_sfx}" associated_space="$_actual_space" 2>/dev/null
+            done
+            sketchybar --update 2>/dev/null
+        fi
+    done
+}
+
 # --- Display geometry ---
 
 # Returns X:Y:W:H in CG coordinates (top-left origin) for a CGDirectDisplayID.

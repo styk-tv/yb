@@ -12,17 +12,28 @@
 app_terminal_open() {
     local work_path="$1" cmd="${2:-}"
     yb_log "opening Terminal.app → $work_path"
+
+    # Snapshot existing Terminal windows BEFORE creating the new one
+    local _pre_wids
+    _pre_wids=$(yb_snapshot_wids "Terminal")
+
     if [ -n "$cmd" ] && [ "$cmd" != "null" ]; then
         osascript -e "tell application \"Terminal\" to do script \"cd $work_path && $cmd\""
     else
         osascript -e "tell application \"Terminal\" to do script \"cd $work_path && clear\""
     fi
 
-    # Capture the new window's yabai ID (Terminal is focused after do script)
+    # Capture the new window by diffing against pre-snapshot (works regardless of focus/space)
     YB_LAST_OPENED_WID=""
     sleep 0.3
-    YB_LAST_OPENED_WID=$(yabai -m query --windows --window 2>/dev/null | jq -r 'select(.app == "Terminal") | .id // empty')
-    [ -n "$YB_LAST_OPENED_WID" ] && yb_log "Terminal captured wid=$YB_LAST_OPENED_WID"
+    YB_LAST_OPENED_WID=$(yb_find_new_wid "Terminal" "$_pre_wids")
+    if [ -n "$YB_LAST_OPENED_WID" ]; then
+        yb_log "Terminal captured wid=$YB_LAST_OPENED_WID (snapshot delta)"
+    else
+        # Fallback: try focused window query
+        YB_LAST_OPENED_WID=$(yabai -m query --windows --window 2>/dev/null | jq -r 'select(.app == "Terminal") | .id // empty')
+        [ -n "$YB_LAST_OPENED_WID" ] && yb_log "Terminal captured wid=$YB_LAST_OPENED_WID (focused fallback)"
+    fi
 }
 
 # Find Terminal.app window by folder name in title. Prints wid or empty.

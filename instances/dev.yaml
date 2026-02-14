@@ -5,6 +5,6 @@ path: ~/.config/styk-tv/yb
 display: 4
 bar: standard
 gap: 12
-padding: 52,12,12,12
+padding: 12,12,12,12
 zoom: 0
 cmd: null

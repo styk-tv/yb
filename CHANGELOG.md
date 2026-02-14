@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.5.0 — BSP tiling, app handlers, multi-workspace bars
+
+### New
+- **Yabai BSP tiling** — workspaces use `layout bsp` instead of float + manual positioning; yabai manages all window geometry automatically
+- **App handler architecture** — `lib/app/*.sh` modules (code.sh, iterm.sh, terminal.sh) provide open/find/close/focus/locate per app; zero app-specific code in orchestrator
+- **Bar height protocol** — bar scripts export their padding reservation via `--height` arg; `yb_bar_height()` queries it; eliminates hardcoded bar height values from yb.sh
+- **Namespaced sketchybar items** — items prefixed with workspace label (e.g., `PUFF_badge`, `ONTOSYS_label`) so multiple workspaces coexist; each bound to its own space via `associated_space`
+- **Multi-workspace support** — `yb ontosys 3 && yb puff 3` creates independent workspaces on the same display, each with its own bar items and space
+- **Space validation** — after space.sh returns, yabai window count check prevents stale plist from causing space reuse; creates fresh space if target already has windows
+- **Shared-space detection** — switch path counts non-sticky windows on space; if more than expected, closes stale windows and rebuilds
+- **Window-to-space migration** — Step 4b moves windows to correct space via `yabai -m window --space` if they landed elsewhere
+- **Window order enforcement** — checks primary/secondary `.frame.x` positions after BSP tiling; swaps with `yabai -m window --swap` if primary is on wrong side
+- **Hidden-space recovery** — focus app first, retry locate (JXA can't see windows on non-visible spaces)
+- **Switch path secondary app handling** — finds, moves, or opens secondary app when switching to existing workspace
+- **`yb_visible_space()`** — resolves visible space index on a display (CGDirectDisplayID)
+- **`yb_space_bsp()`** — configures yabai space for BSP with padding + gap + bar height
+- **Usage hint** — `yb` status shows `yb init <layout> [display_id]` with example
+
+### Changed
+- **Bar launched before windows** — bar.sh runs at Step 1b (after space creation, before app opens) to establish namespace first
+- **Bar `topmost=on`** — ensures sketchybar renders above BSP-managed windows
+- **Bar display pinning** — removed `sticky=on` and `display=all`; bar pinned to specific display index (CGDirectDisplayID resolved to yabai index)
+- **Standard bar** — background darkened (`0xff111111`), folder icon amber (`0xffe5c07b`)
+- **Claudedev layout** — default gap changed from 0 to 10
+- **Instance padding** — bar heights stripped from YAML padding values (now auto-added via `yb_bar_height()`): dev `52,12,12,12` → `12,12,12,12`, mm `52,0,0,0` → `0,0,0,0`, ai `34,0,0,0` → `0,0,0,0`
+- **`runners/bar.sh`** — rewritten with timestamped logging, display index resolution, `--space` parameter, namespace prefix pass-through
+- **`yb.sh`** — unified timestamped logging at every step; config dump, space validation, window moves with exit codes, swap decisions
+- **`action_close.sh`** — extracts prefix from `$NAME` for namespaced item queries and removal
+
+### Removed
+- **Float positioning path** — no more `yabai -m space --layout float` + manual `yb_position()` calls
+- **Manual layout dispatch** — `yb_layout_tile()` / `yb_layout_solo()` no longer called from BSP path (kept for splitview fallback)
+- **Hardcoded bar heights** — removed `if standard→52 elif minimal→34` blocks from yb.sh
+
+## v0.4.1 — Fix secondary window capture
+
+- Grab focused wid after handler open for correct secondary window tracking
+
 ## v0.4.0 — Architecture: separate terminal from layout + shared library
 
 ### New
