@@ -1,4 +1,5 @@
 # Fullscreen split view with sketchybar
+terminal: iterm
 mode: splitview  # tile | splitview | bsp
 bar: standard    # standard | minimal | none
 layout:

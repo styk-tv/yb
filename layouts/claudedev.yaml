@@ -1,0 +1,14 @@
+# Claude Code development workspace
+terminal: iterm
+cmd: unset CLAUDECODE && claude
+mode: tile
+bar: standard
+zoom: 1
+layout:
+  engine: bsp
+  gap: 0
+  padding_top: 0
+  padding_bottom: 0
+  padding_left: 0
+  padding_right: 0
+  border: off

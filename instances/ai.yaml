@@ -1,5 +1,6 @@
 # Claude AI experiments
-runner: split
+terminal: iterm
+mode: tile
 path: ~/code/ai-experiments
 display: 4
 bar: minimal

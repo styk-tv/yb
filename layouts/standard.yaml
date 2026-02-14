@@ -1,4 +1,5 @@
 # Relaxed look for general tasks
+terminal: iterm
 mode: tile    # tile | splitview | bsp
 bar: standard  # standard | minimal | none
 layout:

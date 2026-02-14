@@ -1,5 +1,6 @@
 # Mermaid project
-runner: split
+terminal: iterm
+mode: tile
 path: ~/git_ckp/mermaid
 display: 4
 bar: standard

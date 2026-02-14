@@ -1,5 +1,6 @@
 # Styk-TV main project
-runner: split
+terminal: iterm
+mode: tile
 path: ~/code/styk-tv
 display: 4
 bar: none

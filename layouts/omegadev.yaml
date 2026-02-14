@@ -1,4 +1,5 @@
 # The "Hideous" Clean Look (Zero UI)
+terminal: iterm
 mode: tile    # tile | splitview | bsp
 bar: none      # standard | minimal | none
 layout:

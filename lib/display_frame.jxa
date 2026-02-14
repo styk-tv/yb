@@ -1,0 +1,28 @@
+// FILE: lib/display_frame.jxa
+// Returns display frame in CG coordinates (top-left origin) for a CGDirectDisplayID.
+// Usage: osascript -l JavaScript lib/display_frame.jxa <display_id>
+// Output: X:Y:W:H (integers, colon-separated)
+
+function run(argv) {
+    var targetDID = parseInt(argv[0]);
+    ObjC.import("AppKit");
+    var screens = $.NSScreen.screens;
+    var primaryH = 0;
+    for (var i = 0; i < screens.count; i++) {
+        var f = screens.objectAtIndex(i).frame;
+        if (f.origin.x === 0 && f.origin.y === 0) { primaryH = f.size.height; break; }
+    }
+    for (var i = 0; i < screens.count; i++) {
+        var s = screens.objectAtIndex(i);
+        var did = ObjC.unwrap(s.deviceDescription.objectForKey("NSScreenNumber"));
+        if (did == targetDID) {
+            var f = s.frame;
+            var x = Math.floor(f.origin.x);
+            var y = Math.floor(primaryH - f.origin.y - f.size.height);
+            var w = Math.floor(f.size.width);
+            var h = Math.floor(f.size.height);
+            return x + ":" + y + ":" + w + ":" + h;
+        }
+    }
+    return "";
+}

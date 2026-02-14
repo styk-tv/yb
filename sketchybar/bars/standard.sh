@@ -84,8 +84,8 @@ sketchybar --set action_close \
     icon.padding_left=6 \
     icon.padding_right=6 \
     background.drawing=off \
-    script="$PLUGIN_DIR/icon_hover.sh" \
-    --subscribe action_close mouse.entered mouse.exited
+    script="$PLUGIN_DIR/action_close.sh" \
+    --subscribe action_close mouse.entered mouse.exited mouse.clicked
 
 # Open folder in Finder
 sketchybar --add item action_folder right &>/dev/null
