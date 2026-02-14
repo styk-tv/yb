@@ -32,6 +32,12 @@ app_iterm_open() {
         -e '    end tell' \
         -e 'end tell' 2>/dev/null
     yb_log "iTerm2 window created + command: $iterm_cmd"
+
+    # Capture the new window's yabai ID (iTerm2 is focused after create)
+    YB_LAST_OPENED_WID=""
+    sleep 0.3
+    YB_LAST_OPENED_WID=$(yabai -m query --windows --window 2>/dev/null | jq -r 'select(.app == "iTerm2") | .id // empty')
+    [ -n "$YB_LAST_OPENED_WID" ] && yb_log "iTerm2 captured wid=$YB_LAST_OPENED_WID"
 }
 
 # Find iTerm2 window. Optionally filter by yabai space index.

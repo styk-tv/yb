@@ -406,15 +406,14 @@ yabai -m space --layout float 2>/dev/null
 echo ""
 "app_${PRIMARY_APP}_open" "$WORK_PATH"
 
-SECONDARY_SNAP=""
 SECONDARY_WID=""
 if [ "$SECONDARY_APP" != "none" ]; then
-    # Snapshot before opening for delta tracking
-    if type "app_${SECONDARY_APP}_snapshot" &>/dev/null; then
-        SECONDARY_SNAP=$("app_${SECONDARY_APP}_snapshot")
-        yb_log "secondary snapshot: ${SECONDARY_SNAP:-none}"
-    fi
+    YB_LAST_OPENED_WID=""
     "app_${SECONDARY_APP}_open" "$WORK_PATH" "$CMD"
+    # Handler captures the new window's yabai ID via YB_LAST_OPENED_WID
+    if [ -n "$YB_LAST_OPENED_WID" ]; then
+        SECONDARY_WID="$YB_LAST_OPENED_WID"
+    fi
 fi
 
 # Step 3: Wait for primary window
@@ -436,43 +435,23 @@ for i in $(seq 1 15); do
 done
 [ -z "$PRIMARY_WID" ] && yb_log "WARN: primary window not found after 15s"
 
-# Step 4: Find secondary window by snapshot delta
-if [ "$SECONDARY_APP" != "none" ]; then
-    # Method 1: snapshot delta (most reliable — space-independent)
-    if [ -n "$SECONDARY_SNAP" ] && type "app_${SECONDARY_APP}_find_new" &>/dev/null; then
-        for i in $(seq 1 10); do
-            SECONDARY_WID=$("app_${SECONDARY_APP}_find_new" "$SECONDARY_SNAP")
-            [ -n "$SECONDARY_WID" ] && break
-            sleep 0.5
-        done
-        [ -n "$SECONDARY_WID" ] && yb_log "secondary wid=$SECONDARY_WID (delta)"
+# Step 4: Find secondary window (fallback if not captured during open)
+if [ "$SECONDARY_APP" != "none" ] && [ -z "$SECONDARY_WID" ]; then
+    # Fallback 1: find on same space as primary
+    _SPACE=""
+    [ -n "$PRIMARY_WID" ] && _SPACE=$(yb_window_space "$PRIMARY_WID")
+    if [ -n "$_SPACE" ]; then
+        SECONDARY_WID=$("app_${SECONDARY_APP}_find" "$WORK_PATH" "$_SPACE")
+        [ -n "$SECONDARY_WID" ] && yb_log "secondary wid=$SECONDARY_WID (space=$_SPACE)"
     fi
 
-    # Method 2: find on same space as primary
-    if [ -z "$SECONDARY_WID" ]; then
-        _SPACE=""
-        [ -n "$PRIMARY_WID" ] && _SPACE=$(yb_window_space "$PRIMARY_WID")
-        if [ -n "$_SPACE" ]; then
-            SECONDARY_WID=$("app_${SECONDARY_APP}_find" "$WORK_PATH" "$_SPACE")
-            [ -n "$SECONDARY_WID" ] && yb_log "secondary wid=$SECONDARY_WID (space=$_SPACE)"
-        fi
-    fi
-
-    # Method 3: find any window (no space filter)
+    # Fallback 2: find any window
     if [ -z "$SECONDARY_WID" ]; then
         SECONDARY_WID=$("app_${SECONDARY_APP}_find" "$WORK_PATH")
         [ -n "$SECONDARY_WID" ] && yb_log "secondary wid=$SECONDARY_WID (any)"
     fi
 
-    if [ -z "$SECONDARY_WID" ]; then
-        # Diagnostic: show what yabai sees
-        if type "app_${SECONDARY_APP}_snapshot" &>/dev/null; then
-            _CURRENT=$("app_${SECONDARY_APP}_snapshot")
-            yb_log "WARN: secondary not found — snap=[$SECONDARY_SNAP] now=[$_CURRENT]"
-        else
-            yb_log "WARN: secondary window not found"
-        fi
-    fi
+    [ -z "$SECONDARY_WID" ] && yb_log "WARN: secondary window not found"
 fi
 
 # Step 5: Layout

@@ -17,6 +17,12 @@ app_terminal_open() {
     else
         osascript -e "tell application \"Terminal\" to do script \"cd $work_path && clear\""
     fi
+
+    # Capture the new window's yabai ID (Terminal is focused after do script)
+    YB_LAST_OPENED_WID=""
+    sleep 0.3
+    YB_LAST_OPENED_WID=$(yabai -m query --windows --window 2>/dev/null | jq -r 'select(.app == "Terminal") | .id // empty')
+    [ -n "$YB_LAST_OPENED_WID" ] && yb_log "Terminal captured wid=$YB_LAST_OPENED_WID"
 }
 
 # Find Terminal.app window by folder name in title. Prints wid or empty.
