@@ -73,14 +73,13 @@ if (p.exists()) {
 }
 
 # Check if VS Code has this workspace open. Returns 0 if open, 1 if not.
+# Uses yabai window query (live) instead of code --status (stale after close).
 # $1=work_path
 app_code_is_open() {
     local work_path="$1"
-    local folder
-    folder=$(basename "$work_path")
-    local count
-    count=$(code --status 2>&1 | grep -c "Folder ($folder):")
-    [ "$count" -gt 0 ]
+    local wid
+    wid=$(app_code_find "$work_path")
+    [ -n "$wid" ]
 }
 
 # Focus/activate an existing VS Code window.

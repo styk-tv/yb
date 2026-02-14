@@ -54,6 +54,15 @@ except: pass" 2>/dev/null)
         _spin_close &
         _SPINNER_PID=$!
 
+        # Resolve space index BEFORE closing (from badge item bitmask)
+        _SPACE_IDX=""
+        _MASK=$(sketchybar --query "${PREFIX}_badge" 2>/dev/null | jq -r '.geometry.associated_space_mask // 0' 2>/dev/null)
+        if [ -n "$_MASK" ] && [ "$_MASK" -gt 0 ] 2>/dev/null; then
+            _b=$_MASK _n=0
+            while [ "$_b" -gt 1 ]; do _b=$((_b / 2)); _n=$((_n + 1)); done
+            _SPACE_IDX="$_n"
+        fi
+
         # Close all known app types (no-op if window doesn't exist)
         app_code_close "$FULL_PATH"
         app_iterm_close "$FULL_PATH"
@@ -67,5 +76,13 @@ except: pass" 2>/dev/null)
         for suffix in badge label path code term folder close; do
             sketchybar --remove "${PREFIX}_${suffix}" 2>/dev/null
         done
+
+        # Destroy the macOS Space (prevents orphan empty desktops)
+        if [ -n "$_SPACE_IDX" ] && [ "$_SPACE_IDX" -gt 0 ] 2>/dev/null; then
+            sleep 0.5
+            yabai -m space "$_SPACE_IDX" --destroy 2>/dev/null
+            # Rebind other workspaces' bar items (space destruction shifts indices)
+            yb_rebind_stale_items "$PREFIX"
+        fi
         ;;
 esac

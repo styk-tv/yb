@@ -161,6 +161,14 @@ mgmt = data['SpacesDisplayConfiguration']['Management Data']
 monitors = mgmt['Monitors']
 space_props = {sp['name']: sp.get('windows', []) for sp in data['SpacesDisplayConfiguration'].get('Space Properties', [])}
 
+# Get live window IDs from yabai (plist can have stale IDs from closed windows)
+live_wids = None
+try:
+    yabai_wins = json.loads(subprocess.check_output(['yabai', '-m', 'query', '--windows'], stderr=subprocess.DEVNULL))
+    live_wids = {w['id'] for w in yabai_wins}
+except:
+    pass  # yabai unavailable — trust plist as-is
+
 # Find monitor: match by UUID or 'Main' (primary display)
 target_mon = None
 for m in monitors:
@@ -184,10 +192,13 @@ desktops = [s for s in target_mon.get('Spaces', []) if s.get('type', -1) == 0]
 current_sid = target_mon.get('Current Space', {}).get('ManagedSpaceID', -1)
 
 # Count window appearances across desktops on this monitor
+# Filter to live windows only (removes stale IDs from closed windows)
 all_wids = []
 desk_wids = {}
 for d in desktops:
     wids = set(space_props.get(d['uuid'], []))
+    if live_wids is not None:
+        wids = wids & live_wids
     desk_wids[d['uuid']] = wids
     all_wids.extend(wids)
 wid_counts = Counter(all_wids)
