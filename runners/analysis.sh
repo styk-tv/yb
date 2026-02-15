@@ -41,7 +41,7 @@ ANOMALY_FILE=$(mktemp)
 trap "rm -f $ANOMALY_FILE" EXIT
 
 # --- Canonical checkpoint order ---
-CHECKPOINTS="config workspace-check switch-locate switch-bsp switch-bar switch-focus switch-secondary switch-done pre-create post-space post-bar post-poll post-move post-layout done"
+CHECKPOINTS="config state-validate workspace-check switch-locate switch-bsp switch-bar switch-focus switch-secondary switch-done pre-create post-space post-bar post-poll post-move post-layout done"
 
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════╗"
@@ -484,6 +484,52 @@ echo ""
 
 # Re-count anomalies (window order + bar health may have added entries)
 ANOMALY_COUNT=$(wc -l < "$ANOMALY_FILE" 2>/dev/null | tr -d ' ')
+
+# ──────────────────────────────────────────────────────────────
+# 7b. STATE MANIFEST — owned WIDs per workspace
+# ──────────────────────────────────────────────────────────────
+echo "┌─ State Manifest ─────────────────────────────────────────────────┐"
+echo "│"
+
+_STATE_FILE="$REPO_ROOT/state/manifest.json"
+if [ -f "$_STATE_FILE" ]; then
+    _SM_KEYS=$(jq -r '.workspaces // {} | keys[]' "$_STATE_FILE" 2>/dev/null)
+    if [ -n "$_SM_KEYS" ]; then
+        for _smk in $_SM_KEYS; do
+            _sme=$(jq -r --arg l "$_smk" '.workspaces[$l]' "$_STATE_FILE")
+            _sm_sp=$(echo "$_sme" | jq -r '.space_idx // "?"')
+            _sm_uuid=$(echo "$_sme" | jq -r '.space_uuid // "?"' | cut -c1-8)
+            _sm_papp=$(echo "$_sme" | jq -r '.primary.app // "?"')
+            _sm_pwid=$(echo "$_sme" | jq -r '.primary.wid // 0')
+            _sm_sapp=$(echo "$_sme" | jq -r '.secondary.app // "?"')
+            _sm_swid=$(echo "$_sme" | jq -r '.secondary.wid // 0')
+            _sm_mode=$(echo "$_sme" | jq -r '.mode // "?"')
+
+            # Quick liveness: check primary wid
+            _sm_live="?"
+            if yabai -m query --windows --window "$_sm_pwid" >/dev/null 2>&1; then
+                _sm_live="alive"
+            else
+                _sm_live="stale"
+            fi
+
+            if [ "$_sm_mode" = "tile" ] && [ "$_sm_swid" -gt 0 ] 2>/dev/null; then
+                printf "│  %-10s space=%-3s uuid=%-8s %s(%s)+%s(%s)  %s\n" \
+                    "$_smk" "$_sm_sp" "$_sm_uuid" "$_sm_papp" "$_sm_pwid" "$_sm_sapp" "$_sm_swid" "$_sm_live"
+            else
+                printf "│  %-10s space=%-3s uuid=%-8s %s(%s)  %s\n" \
+                    "$_smk" "$_sm_sp" "$_sm_uuid" "$_sm_papp" "$_sm_pwid" "$_sm_live"
+            fi
+        done
+    else
+        echo "│  No workspace entries"
+    fi
+else
+    echo "│  No state manifest (state/manifest.json not found)"
+fi
+echo "│"
+echo "└────────────────────────────────────────────────────────────────┘"
+echo ""
 
 # ──────────────────────────────────────────────────────────────
 # 8. SKETCHYBAR CONFIG — live bar + item state

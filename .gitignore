@@ -1,4 +1,5 @@
 log/
+state/
 .claude/
 SPEC.RUNNERS.md
 PLAN*.md

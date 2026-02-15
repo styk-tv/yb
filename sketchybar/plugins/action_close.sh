@@ -86,6 +86,9 @@ except: pass" 2>/dev/null)
             sketchybar --remove "${PREFIX}_${suffix}" 2>/dev/null
         done
 
+        # Remove state manifest entry
+        yb_state_remove "$PREFIX"
+
         # Space left as empty — will be reused on next launch
         ;;
 esac

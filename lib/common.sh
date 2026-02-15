@@ -7,6 +7,8 @@
 YB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 YB_ROOT="$(dirname "$YB_LIB_DIR")"
 
+source "$YB_LIB_DIR/state.sh"
+
 # --- Logging ---
 
 yb_ts() {

@@ -74,7 +74,8 @@ yb mm 3
 
 YB reads the instance, then runs each piece in sequence:
 
-1. Checks if workspace `mm` is already open &mdash; if so, switches to it (refreshes bar, ensures secondary app)
+1. Validates state manifest &mdash; if workspace is intact (window IDs alive, correct space, bar bound), focuses and exits immediately
+1b. Falls back to discovery if no state exists &mdash; checks if workspace `mm` is already open, switches to it (refreshes bar, ensures secondary app)
 2. `runners/space.sh` &mdash; finds or creates an empty virtual desktop on display 3
 3. Configures yabai BSP on the new space (padding, gap, bar height)
 4. `runners/bar.sh` &mdash; configures SketchyBar with namespaced items (e.g., **MM_badge**, **MM_label**)
@@ -178,7 +179,7 @@ alias yb='~/.config/styk-tv/yb/yb.sh'
 yb
 ```
 
-Shows services, instances, layouts, runners, and connected displays:
+Shows services, instances, layouts, runners, connected displays, and live workspaces (from state manifest):
 
 ```
 yb - workspace orchestrator
@@ -375,6 +376,45 @@ When an instance uses `layout:`, bar height is auto-added to top padding (querie
 | `yb_display_frame $did` | Display geometry as X:Y:W:H (yabai or JXA) |
 | `yb_position $wid $x $y $w $h` | Position window (yabai or JXA; used by splitview fallback) |
 
+### State manifest (`lib/state.sh`)
+
+Persistent workspace ownership tracking. Stores window IDs, space UUIDs, and workspace metadata in `state/manifest.json`. Sourced automatically from `lib/common.sh`.
+
+| Function | Purpose |
+|---|---|
+| `yb_state_read` | Read full manifest (returns `{}` if missing) |
+| `yb_state_get $label` | Read one workspace entry |
+| `yb_state_set $label $json` | Write/update one workspace entry (atomic: write tmp, mv) |
+| `yb_state_remove $label` | Remove one workspace entry |
+| `yb_state_clear` | Delete manifest (used by `yb down`) |
+| `yb_state_validate $label` | Validate entry against live yabai/sketchybar state |
+| `yb_state_build_json` | Build state JSON from current shell variables |
+
+**`yb_state_validate`** returns one of: `intact`, `no_state`, `space_gone`, `primary_dead`, `secondary_dead`, `primary_drifted`, `secondary_drifted`, `order_wrong`, `bar_missing`, `bar_stale`. The orchestrator uses this to skip all discovery when the workspace is intact, or apply targeted repairs for each failure mode.
+
+**Space UUID tracking** &mdash; yabai spaces have stable UUIDs that survive macOS space index renumbering. The manifest stores the UUID and resolves it to the current index on each run.
+
+**Manifest format:**
+
+```json
+{
+  "version": 1,
+  "workspaces": {
+    "ONTOSYS": {
+      "instance": "ontosys",
+      "display": 3,
+      "space_idx": 5,
+      "space_uuid": "8824411F-EE19-4445-99CF-69577110030E",
+      "primary": { "app": "code", "wid": 51895 },
+      "secondary": { "app": "iterm", "wid": 51882 },
+      "mode": "tile",
+      "bar_style": "standard",
+      "work_path": "/Users/neoxr/git_ckp/ontosys"
+    }
+  }
+}
+```
+
 ### App handlers (`lib/app/`)
 
 Each app has three files: shared (engine-neutral), yabai engine, and JXA engine. The orchestrator sources the shared file first, then the engine override. Last-sourced function wins &mdash; no if/else branching.
@@ -510,22 +550,31 @@ When yabai is running, display frames come from `yabai -m query --displays` (mat
 
 ## Workspace switching
 
-When `yb <instance>` is called for an already-open workspace:
+When `yb <instance>` is called, state validation runs first:
+
+1. **State validation** &mdash; `yb_state_validate` checks the manifest for window IDs, space UUID, window positions, and bar bindings
+2. **State fast path** &mdash; if `intact`, focus space + focus primary app, exit (zero discovery queries)
+3. **Targeted repair** &mdash; for `order_wrong`, `bar_missing`, `bar_stale`, `*_drifted`: fix only what's broken, update state, exit
+4. **Fallback** &mdash; `no_state`, `space_gone`, `*_dead`: fall through to existing discovery + repair/create logic
+
+When no state exists (first run, or after `yb down`), the legacy detection path runs:
 
 1. **Detection** &mdash; `app_code_find` (yabai window query) checks for matching window
 2. **Window lookup** &mdash; yabai query resolves window ID and display index directly
 3. **Display check** &mdash; compares found display to target display
-4. **Shared-space check** &mdash; counts non-sticky windows on the space; if more than expected (another workspace's windows), closes stale and rebuilds
 
 **Same display** (refresh):
 - Re-applies BSP config and bar
 - Focuses primary app
 - Ensures secondary app is on the same space (finds, moves, or opens)
+- Writes state manifest after successful repair
 
 **Different display** (migration):
 - Closes VS Code, iTerm2, Terminal via app handler close functions
 - Removes namespaced bar items
 - Falls through to fresh creation on the new display
+
+After any successful CREATE or SWITCH, the state manifest is written so subsequent runs get the fast path.
 
 ---
 
@@ -577,8 +626,11 @@ yb/
 ├── setup.sh                      # Install deps, symlink configs
 ├── CHANGELOG.md
 ├── .gitignore
+├── state/                        # Runtime state (gitignored)
+│   └── manifest.json             # Workspace ownership: WIDs, space UUIDs, bar bindings
 ├── lib/                          # Shared library + app handlers
 │   ├── common.sh                 # BSP config, space queries, display, positioning
+│   ├── state.sh                  # State manifest: read/write/validate workspace ownership
 │   ├── display_frame.jxa         # JXA display geometry fallback
 │   └── app/                      # Per-app handlers (shared + engine modules)
 │       ├── code.sh               # VS Code shared (open, focus, is_open, post_setup)
@@ -649,6 +701,10 @@ Instance YAML          Layout YAML           App Handlers
                                            └──────┬───────┘
 yb.sh (orchestrator)                              │
 ┌─────────────────────────────────────────────────┤
+│ 0.  State validate (manifest.json)              │
+│     intact → focus + exit (zero queries)        │
+│     repair → fix only what's broken + exit      │
+│     no_state → fall through ↓                   │
 │ 1.  Resolve instance + layout                   │
 │ 1a. space.sh → create virtual desktop           │
 │ 1b. yb_space_bsp → configure BSP     ◀── uses ─┘
@@ -658,6 +714,7 @@ yb.sh (orchestrator)                              │
 │ 4.  Find/move secondary window
 │ 5.  Enforce window order (swap if needed)
 │ 6.  Post-setup (zoom)
+│ 7.  Write state manifest
 └─────────────────────────────────────────────────┘
 ```
 

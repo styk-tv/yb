@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.6.0 — State manifest: flawless idempotent workspace management
+
+### New
+- **State manifest** (`state/manifest.json`) — persistent workspace ownership tracking; stores window IDs, space UUIDs, display, mode, bar style, and work path per workspace
+- **`lib/state.sh`** — new shared library with `yb_state_read`, `yb_state_get`, `yb_state_set`, `yb_state_remove`, `yb_state_clear`, `yb_state_validate`, `yb_state_build_json`
+- **State-first validation** — `yb_state_validate` checks manifest against live yabai/sketchybar state before any discovery; returns one of: `intact`, `no_state`, `space_gone`, `primary_dead`, `secondary_dead`, `primary_drifted`, `secondary_drifted`, `order_wrong`, `bar_missing`, `bar_stale`
+- **Zero-query fast path** — when state is `intact`, focuses space + primary app and exits immediately; no yabai window discovery, no title matching, no space search
+- **Targeted repair** — each failure mode has a dedicated fix: swap windows (`order_wrong`), move window back (`*_drifted`), create bar (`bar_missing`), rebind bar (`bar_stale`); only the broken element is touched
+- **Space UUID tracking** — manifest stores yabai space UUIDs that survive macOS space index renumbering; UUID resolved to current index on each run
+- **Live Workspaces display** — `yb` (no args) shows a "Live Workspaces" section with space, display, window IDs, and liveness status from manifest
+- **State Manifest section in analysis** — `runners/analysis.sh` shows owned WIDs per workspace with liveness check; `state-validate` added to checkpoint timeline
+
+### Changed
+- **`yb.sh`** — state validation inserted before section 2 (workspace check); state written at end of CREATE, REPAIR (switch), and FAST PATH (switch-intact)
+- **`yb down`** — calls `yb_state_clear` to remove manifest when shutting down
+- **`action_close.sh`** — calls `yb_state_remove` when closing a workspace via bar button
+- **`lib/common.sh`** — sources `lib/state.sh`
+- **`.gitignore`** — added `state/`
+- **Backward compatible** — no state file means `no_state` → existing discovery logic runs unchanged; state is written after first successful CREATE or SWITCH
+
+## v0.5.1 — Idempotent switch path
+
 ## v0.5.0 — BSP tiling, app handlers, multi-workspace bars
 
 ### New

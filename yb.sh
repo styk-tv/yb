@@ -178,6 +178,42 @@ result;' 2>/dev/null)
         [ "$did" = "$ACTIVE_DID" ] && marker=" *"
         printf "  %-4s %-20s %s%s\n" "$did" "$dname" "$pixels" "$marker"
     done
+    echo ""
+
+    # --- Live Workspaces (from state manifest) ---
+    _MANIFEST=$(yb_state_read)
+    _WS_KEYS=$(echo "$_MANIFEST" | jq -r '.workspaces // {} | keys[]' 2>/dev/null)
+    if [ -n "$_WS_KEYS" ]; then
+        echo "Live Workspaces:"
+        for _wk in $_WS_KEYS; do
+            _we=$(echo "$_MANIFEST" | jq -r --arg l "$_wk" '.workspaces[$l]')
+            _ws_sp=$(echo "$_we" | jq -r '.space_idx // "?"')
+            _ws_disp=$(echo "$_we" | jq -r '.display // "?"')
+            _ws_pwid=$(echo "$_we" | jq -r '.primary.wid // 0')
+            _ws_papp=$(echo "$_we" | jq -r '.primary.app // "?"')
+            _ws_swid=$(echo "$_we" | jq -r '.secondary.wid // 0')
+            _ws_sapp=$(echo "$_we" | jq -r '.secondary.app // "?"')
+            _ws_mode=$(echo "$_we" | jq -r '.mode // "?"')
+
+            # Quick liveness check: primary wid still exists?
+            _ws_status="?"
+            if yabai -m query --windows --window "$_ws_pwid" >/dev/null 2>&1; then
+                _ws_status="alive"
+            else
+                _ws_status="stale"
+            fi
+
+            if [ "$_ws_mode" = "tile" ] && [ "$_ws_swid" -gt 0 ] 2>/dev/null; then
+                printf "  %-10s space=%-3s display=%-3s %s(%s)+%s(%s)  %s\n" \
+                    "$_wk" "$_ws_sp" "$_ws_disp" "$_ws_papp" "$_ws_pwid" "$_ws_sapp" "$_ws_swid" "$_ws_status"
+            else
+                printf "  %-10s space=%-3s display=%-3s %s(%s)  %s\n" \
+                    "$_wk" "$_ws_sp" "$_ws_disp" "$_ws_papp" "$_ws_pwid" "$_ws_status"
+            fi
+        done
+        echo ""
+    fi
+
     exit 0
 fi
 
@@ -216,6 +252,10 @@ if [ "$1" == "down" ]; then
         done
     fi
     echo "  Closed $_CLOSED windows on YB spaces"
+
+    # Step 2b: Clear state manifest
+    yb_state_clear
+    echo "  State manifest cleared"
 
     # Step 3: Remove all bar items
     for _inst in "$REPO_ROOT"/instances/*.yaml; do
@@ -451,11 +491,151 @@ echo "=== yb: $TARGET → $PRIMARY_APP+$SECONDARY_APP/$MODE on display $DISPLAY 
 yb_log "config: bar=$BAR_STYLE bar_h=$BAR_HEIGHT gap=$GAP pad=$PADDING"
 yb_debug "config" "resolved target=$TARGET primary=$PRIMARY_APP secondary=$SECONDARY_APP"
 
+# --- 1b. STATE VALIDATION (fast path — before any discovery) ---
+_STATE_RESULT=$(yb_state_validate "$LABEL")
+yb_log "state: validate=$_STATE_RESULT"
+yb_debug "state-validate" "result=$_STATE_RESULT"
+
+if [ "$_STATE_RESULT" = "intact" ]; then
+    # === STATE FAST PATH: workspace fully intact — focus only, ZERO discovery ===
+    yb_log "state: intact on space=$_SV_SPACE_IDX — focus only"
+    SPACE_IDX="$_SV_SPACE_IDX"
+    PRIMARY_WID="$_SV_PRIMARY_WID"
+    SECONDARY_WID="$_SV_SECONDARY_WID"
+    yb_focus_space "$SPACE_IDX" "$DISPLAY"
+    sleep 0.2
+    if type "app_${PRIMARY_APP}_focus" &>/dev/null; then
+        "app_${PRIMARY_APP}_focus" "$WORK_PATH"
+    fi
+    yb_debug "switch-done" "state intact — focused"
+    if [ "$YB_DEBUG" -eq 1 ]; then
+        echo ""
+        "$REPO_ROOT/runners/analysis.sh" "$YB_DEBUG_SESSION"
+    fi
+    echo ""
+    echo "=== Switched: $LABEL ==="
+    exit 0
+fi
+
+if [ "$_STATE_RESULT" = "space_gone" ]; then
+    yb_log "state: space gone — removing stale entry, will CREATE"
+    yb_state_remove "$LABEL"
+fi
+
+if [ "$_STATE_RESULT" = "order_wrong" ]; then
+    SPACE_IDX="$_SV_SPACE_IDX"
+    PRIMARY_WID="$_SV_PRIMARY_WID"
+    SECONDARY_WID="$_SV_SECONDARY_WID"
+    yb_log "state: order wrong — swapping windows"
+    yb_focus_space "$SPACE_IDX" "$DISPLAY"
+    sleep 0.2
+    yabai -m window "$PRIMARY_WID" --swap "$SECONDARY_WID" 2>/dev/null
+    if type "app_${PRIMARY_APP}_focus" &>/dev/null; then
+        "app_${PRIMARY_APP}_focus" "$WORK_PATH"
+    fi
+    yb_debug "switch-done" "state order_wrong — swapped"
+    if [ "$YB_DEBUG" -eq 1 ]; then
+        echo ""
+        "$REPO_ROOT/runners/analysis.sh" "$YB_DEBUG_SESSION"
+    fi
+    echo ""
+    echo "=== Switched: $LABEL ==="
+    exit 0
+fi
+
+if [ "$_STATE_RESULT" = "bar_missing" ]; then
+    SPACE_IDX="$_SV_SPACE_IDX"
+    PRIMARY_WID="$_SV_PRIMARY_WID"
+    SECONDARY_WID="$_SV_SECONDARY_WID"
+    yb_log "state: bar missing — creating"
+    yb_focus_space "$SPACE_IDX" "$DISPLAY"
+    sleep 0.2
+    "$REPO_ROOT/runners/bar.sh" --display "$DISPLAY" --style "$BAR_STYLE" --label "$LABEL" --path "$WORK_PATH" --space "$SPACE_IDX"
+    if type "app_${PRIMARY_APP}_focus" &>/dev/null; then
+        "app_${PRIMARY_APP}_focus" "$WORK_PATH"
+    fi
+    yb_state_set "$LABEL" "$(yb_state_build_json)"
+    yb_debug "switch-done" "state bar_missing — created bar"
+    if [ "$YB_DEBUG" -eq 1 ]; then
+        echo ""
+        "$REPO_ROOT/runners/analysis.sh" "$YB_DEBUG_SESSION"
+    fi
+    echo ""
+    echo "=== Switched: $LABEL ==="
+    exit 0
+fi
+
+if [ "$_STATE_RESULT" = "bar_stale" ]; then
+    SPACE_IDX="$_SV_SPACE_IDX"
+    PRIMARY_WID="$_SV_PRIMARY_WID"
+    SECONDARY_WID="$_SV_SECONDARY_WID"
+    yb_log "state: bar stale — rebinding to space=$SPACE_IDX"
+    yb_focus_space "$SPACE_IDX" "$DISPLAY"
+    sleep 0.2
+    for _suffix in badge label path code term folder close; do
+        sketchybar --set "${LABEL}_${_suffix}" associated_space="$SPACE_IDX" 2>/dev/null
+    done
+    sketchybar --update 2>/dev/null
+    if type "app_${PRIMARY_APP}_focus" &>/dev/null; then
+        "app_${PRIMARY_APP}_focus" "$WORK_PATH"
+    fi
+    yb_debug "switch-done" "state bar_stale — rebound"
+    if [ "$YB_DEBUG" -eq 1 ]; then
+        echo ""
+        "$REPO_ROOT/runners/analysis.sh" "$YB_DEBUG_SESSION"
+    fi
+    echo ""
+    echo "=== Switched: $LABEL ==="
+    exit 0
+fi
+
+if [ "$_STATE_RESULT" = "primary_drifted" ] || [ "$_STATE_RESULT" = "secondary_drifted" ]; then
+    SPACE_IDX="$_SV_SPACE_IDX"
+    PRIMARY_WID="$_SV_PRIMARY_WID"
+    SECONDARY_WID="$_SV_SECONDARY_WID"
+    yb_log "state: $_STATE_RESULT — moving window back to space=$SPACE_IDX"
+    yb_focus_space "$SPACE_IDX" "$DISPLAY"
+    sleep 0.2
+    if [ "$_STATE_RESULT" = "primary_drifted" ] && [ -n "$PRIMARY_WID" ]; then
+        yabai -m window "$PRIMARY_WID" --space "$SPACE_IDX" 2>/dev/null
+    fi
+    if [ "$_STATE_RESULT" = "secondary_drifted" ] && [ -n "$SECONDARY_WID" ]; then
+        yabai -m window "$SECONDARY_WID" --space "$SPACE_IDX" 2>/dev/null
+    fi
+    sleep 0.3
+    if type "app_${PRIMARY_APP}_focus" &>/dev/null; then
+        "app_${PRIMARY_APP}_focus" "$WORK_PATH"
+    fi
+    yb_state_set "$LABEL" "$(yb_state_build_json)"
+    yb_debug "switch-done" "state $_STATE_RESULT — moved back"
+    if [ "$YB_DEBUG" -eq 1 ]; then
+        echo ""
+        "$REPO_ROOT/runners/analysis.sh" "$YB_DEBUG_SESSION"
+    fi
+    echo ""
+    echo "=== Switched: $LABEL ==="
+    exit 0
+fi
+
+# For primary_dead / secondary_dead: fall through to existing SWITCH REPAIR logic
+# which already handles reopening missing windows. State will be updated at end of repair.
+if [ "$_STATE_RESULT" = "primary_dead" ] || [ "$_STATE_RESULT" = "secondary_dead" ]; then
+    yb_log "state: $_STATE_RESULT — falling through to REPAIR"
+    # Pre-populate SPACE_IDX from state so repair knows where to work
+    SPACE_IDX="$_SV_SPACE_IDX"
+fi
+
 # --- 2. CHECK FOR EXISTING WORKSPACE ---
 _HAS_WORKSPACE=0
 if type "app_${PRIMARY_APP}_is_open" &>/dev/null; then
     "app_${PRIMARY_APP}_is_open" "$WORK_PATH" && _HAS_WORKSPACE=1
 fi
+
+# If state says a window is dead, force into switch path for repair
+if [ "$_STATE_RESULT" = "primary_dead" ] || [ "$_STATE_RESULT" = "secondary_dead" ]; then
+    _HAS_WORKSPACE=1
+fi
+
 yb_log "workspace check: open=$_HAS_WORKSPACE"
 yb_debug "workspace-check" "open=$_HAS_WORKSPACE"
 
@@ -556,6 +736,8 @@ if [ "$_HAS_WORKSPACE" -eq 1 ]; then
                 for _suffix in badge label path code term folder close; do
                     sketchybar --set "${LABEL}_${_suffix}" associated_space="$SPACE_IDX" 2>/dev/null
                 done
+                # Write state (captures WIDs for subsequent state-fast-path)
+                yb_state_set "$LABEL" "$(yb_state_build_json)"
                 yb_debug "switch-done" "workspace intact — focused"
                 if [ "$YB_DEBUG" -eq 1 ]; then
                     echo ""
@@ -652,6 +834,10 @@ if [ "$_HAS_WORKSPACE" -eq 1 ]; then
                     yabai -m window "$PRIMARY_WID" --swap "$SECONDARY_WID" 2>/dev/null
                 fi
             fi
+
+            # Write state after repair
+            yb_state_set "$LABEL" "$(yb_state_build_json)"
+            yb_log "state: written after repair"
 
             yb_debug "switch-done" "workspace repaired"
             if [ "$YB_DEBUG" -eq 1 ]; then
@@ -932,6 +1118,10 @@ if [ -n "$PRIMARY_WID" ] && [ -n "$SECONDARY_WID" ] && [ "$MODE" = "tile" ]; the
         yabai -m window "$PRIMARY_WID" --swap "$SECONDARY_WID" 2>/dev/null
     fi
 fi
+
+# Write state manifest after successful CREATE
+yb_state_set "$LABEL" "$(yb_state_build_json)"
+yb_log "state: written after CREATE"
 
 yb_debug "done" "workspace ready"
 
