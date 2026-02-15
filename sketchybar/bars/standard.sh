@@ -26,11 +26,11 @@ if [ "$ITEMS_ONLY" != "--items-only" ]; then
         topmost=off \
         drawing=on \
         blur_radius=0 \
-        color=0xff020d06 \
+        color=0x00000000 \
         corner_radius=0 \
         margin=0 \
-        padding_left=16 \
-        padding_right=16 \
+        padding_left=0 \
+        padding_right=0 \
         hidden=off
 
     sketchybar --default \
@@ -142,5 +142,13 @@ sketchybar --set ${P}_code \
     background.drawing=off \
     script="$PLUGIN_DIR/icon_hover.sh" \
     --subscribe ${P}_code mouse.entered mouse.exited
+
+# Dark background bracket — spans all items, visible only on this workspace's space
+sketchybar --add bracket ${P}_bg ${P}_badge ${P}_label ${P}_path ${P}_code ${P}_term ${P}_folder ${P}_close &>/dev/null
+sketchybar --set ${P}_bg \
+    background.drawing=on \
+    background.color=0xff020d06 \
+    background.height=52 \
+    background.corner_radius=0
 
 sketchybar --update

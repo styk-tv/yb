@@ -19,11 +19,11 @@ if [ "$ITEMS_ONLY" != "--items-only" ]; then
         topmost=off \
         drawing=on \
         blur_radius=0 \
-        color=0xcc020d06 \
+        color=0x00000000 \
         corner_radius=0 \
         margin=0 \
-        padding_left=8 \
-        padding_right=8 \
+        padding_left=0 \
+        padding_right=0 \
         hidden=off
 
     sketchybar --default \
@@ -50,5 +50,13 @@ sketchybar --set ${P}_path \
     label.padding_left=6 \
     script="" \
     updates=off
+
+# Dark background bracket — spans all items, visible only on this workspace's space
+sketchybar --add bracket ${P}_bg ${P}_label ${P}_path &>/dev/null
+sketchybar --set ${P}_bg \
+    background.drawing=on \
+    background.color=0xcc020d06 \
+    background.height=24 \
+    background.corner_radius=0
 
 sketchybar --update

@@ -525,7 +525,7 @@ Each workspace's bar items are prefixed with its label (e.g., `PUFF_badge`, `ONT
 
 ### Display targeting
 
-The bar is configured with `display=all` so it renders on every connected display. Items self-select via `associated_space` &mdash; they appear on whichever display their space is currently visible on. `topmost=off` ensures the bar doesn't cover windows on non-YB spaces.
+The bar background is transparent (`0x00000000`) with `display=all` and `topmost=off`. Each workspace creates a namespaced bracket (`${P}_bg`) with the dark background color, bound to its associated space. This means the dark bar strip only appears on displays where a workspace space is visible &mdash; displays with no workspaces show nothing. When all workspaces are closed, `yb_bar_update_display()` sets `drawing=off` to hide the bar entirely.
 
 ### Config files
 

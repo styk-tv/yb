@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.6.4 — Transparent bar + per-workspace bracket backgrounds
+
+### Fixed
+- **Dark bar strip on displays without workspaces** — replaced opaque bar background with transparent (`0x00000000`); each workspace now gets a namespaced bracket (`${P}_bg`) that provides the dark background only on its associated space; displays with no workspaces show nothing
+- **Bracket background not touching display edges** — bar `padding_left`/`padding_right` pushed items inward, leaving gaps; set bar padding to 0 so brackets extend full-width edge-to-edge
+- **Sketchybar not starting on cold start from choose** — `brew services start` failed silently when triggered from skhd; added fallback to start sketchybar directly if brew services fails
+
+### Changed
+- **`sketchybar/bars/standard.sh`** — transparent bar background, `padding_left=0`, `padding_right=0`, `drawing=on`; added `${P}_bg` bracket with `background.color=0xff020d06`
+- **`sketchybar/bars/minimal.sh`** — same transparent bar + bracket pattern with `0xcc020d06`
+- **`runners/bar.sh`** — added `bg` suffix to space binding loop
+- **`sketchybar/plugins/action_close.sh`** — added `bg` to item removal loop
+- **`yb.sh`** — added `bg` to all item removal loops; sketchybar cold start fallback in `ensure_services()`
+- **`lib/state.sh`** — simplified `yb_bar_update_display()` to drawing on/off only (transparent bar needs no display narrowing)
+
 ## v0.6.3 — Dynamic bar display + space release on close + choose survives shutdown
 
 ### Fixed

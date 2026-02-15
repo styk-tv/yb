@@ -262,7 +262,7 @@ if [ "$1" == "down" ]; then
         [ -f "$_inst" ] || continue
         _name=$(basename "$_inst" .yaml)
         _LABEL=$(echo "$_name" | tr '[:lower:]' '[:upper:]')
-        for _suffix in badge label path code term folder close; do
+        for _suffix in badge label path code term folder close bg; do
             sketchybar --remove "${_LABEL}_${_suffix}" 2>/dev/null
         done
     done
@@ -611,7 +611,7 @@ if [ "$_STATE_RESULT" = "bar_stale" ]; then
     yb_log "state: bar stale — rebinding to space=$SPACE_IDX"
     yb_focus_space "$SPACE_IDX" "$DISPLAY"
     sleep 0.2
-    for _suffix in badge label path code term folder close; do
+    for _suffix in badge label path code term folder close bg; do
         sketchybar --set "${LABEL}_${_suffix}" associated_space="$SPACE_IDX" 2>/dev/null
     done
     sketchybar --update 2>/dev/null
@@ -772,7 +772,7 @@ if [ "$_HAS_WORKSPACE" -eq 1 ]; then
                 if type "app_${PRIMARY_APP}_focus" &>/dev/null; then
                     "app_${PRIMARY_APP}_focus" "$WORK_PATH"
                 fi
-                for _suffix in badge label path code term folder close; do
+                for _suffix in badge label path code term folder close bg; do
                     sketchybar --set "${LABEL}_${_suffix}" associated_space="$SPACE_IDX" 2>/dev/null
                 done
                 # Write state (captures WIDs for subsequent state-fast-path)
@@ -856,7 +856,7 @@ if [ "$_HAS_WORKSPACE" -eq 1 ]; then
                 "$REPO_ROOT/runners/bar.sh" --display "$DISPLAY" --style "$BAR_STYLE" --label "$LABEL" --path "$WORK_PATH" --space "$SPACE_IDX"
             else
                 yb_log "switch: rebinding bar to space=$SPACE_IDX"
-                for _suffix in badge label path code term folder close; do
+                for _suffix in badge label path code term folder close bg; do
                     sketchybar --set "${LABEL}_${_suffix}" associated_space="$SPACE_IDX" 2>/dev/null
                 done
                 sketchybar --update 2>/dev/null

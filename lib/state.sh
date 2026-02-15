@@ -6,48 +6,25 @@
 YB_STATE_DIR="$YB_ROOT/state"
 YB_STATE_FILE="$YB_STATE_DIR/manifest.json"
 
-# Update sketchybar bar display to cover only displays with active workspaces.
-# 0 workspaces → hidden, 1 display → display=N, 2+ displays → display=all.
+# Update sketchybar bar drawing based on active workspaces.
+# Bar background is transparent — brackets provide dark background per workspace.
+# 0 workspaces → drawing=off. 1+ workspaces → drawing=on (display=all is fine).
 # Called automatically by yb_state_set, yb_state_remove, yb_state_clear.
 yb_bar_update_display() {
     pgrep -q sketchybar 2>/dev/null || return 0
-    local _display
-    _display=$(python3 -c "
-import json, subprocess, os
-sf = '$YB_STATE_FILE'
-result = 'all'
-if not os.path.exists(sf):
-    result = 'hidden'
-else:
-    try:
-        with open(sf) as f:
-            m = json.load(f)
-        ws = m.get('workspaces', {})
-        if not ws:
-            result = 'hidden'
-        else:
-            sraw = subprocess.check_output(['yabai', '-m', 'query', '--spaces'], stderr=subprocess.DEVNULL)
-            spaces = json.loads(sraw)
-            s2d = {s['index']: s['display'] for s in spaces}
-            displays = set()
-            for w in ws.values():
-                si = w.get('space_idx')
-                if si in s2d:
-                    displays.add(s2d[si])
-            if not displays:
-                result = 'hidden'
-            elif len(displays) == 1:
-                result = str(list(displays)[0])
-            else:
-                result = 'all'
-    except Exception:
-        result = 'all'
-print(result)
+    local _has_ws=0
+    if [ -f "$YB_STATE_FILE" ]; then
+        _has_ws=$(python3 -c "
+import json
+with open('$YB_STATE_FILE') as f:
+    m = json.load(f)
+print(len(m.get('workspaces', {})))
 " 2>/dev/null)
-    if [ "$_display" = "hidden" ]; then
-        sketchybar --bar drawing=off 2>/dev/null
+    fi
+    if [ "${_has_ws:-0}" -gt 0 ]; then
+        sketchybar --bar drawing=on 2>/dev/null
     else
-        sketchybar --bar drawing=on display="$_display" 2>/dev/null
+        sketchybar --bar drawing=off 2>/dev/null
     fi
 }
 

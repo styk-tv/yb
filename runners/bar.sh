@@ -140,7 +140,7 @@ fi
 # --- Bind items to the workspace space ---
 if [ -n "$SPACE_IDX" ] && [ "$SPACE_IDX" -gt 0 ] 2>/dev/null; then
     bar_log "binding ${PREFIX}_* items to space=$SPACE_IDX"
-    for suffix in badge label path code term folder close; do
+    for suffix in badge label path code term folder close bg; do
         sketchybar --set "${PREFIX}_${suffix}" associated_space=$SPACE_IDX 2>/dev/null
     done
     sketchybar --update 2>/dev/null

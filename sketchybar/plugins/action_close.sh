@@ -82,7 +82,7 @@ except: pass" 2>/dev/null)
         wait $_SPINNER_PID 2>/dev/null
 
         # Remove all namespaced bar items
-        for suffix in badge label path code term folder close; do
+        for suffix in badge label path code term folder close bg; do
             sketchybar --remove "${PREFIX}_${suffix}" 2>/dev/null
         done
 
