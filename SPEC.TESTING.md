@@ -1,6 +1,6 @@
 # YB Testing Specification
 
-Pair-based test methodology for validating workspace orchestration. Workspaces collide at the second deployment &mdash; the first one always works. This spec defines the test sequences that catch real failures.
+Pair-based test methodology for validating workspace orchestration. Workspaces collide at the second deployment &mdash; the first one always works. This spec defines the instrumentation, test sequences, and analysis pipeline that catch real failures.
 
 ---
 
@@ -33,6 +33,276 @@ The pair test is the fundamental unit. A single workspace succeeds trivially. Th
 5. **Track window IDs** &mdash; the state manifest must own every WID; no orphans, no sharing
 6. **Idempotent re-run** &mdash; running the same workspace again must produce ZERO discovery, ZERO creation
 7. **Full cycle** &mdash; `yb down` + redeploy must produce identical results to the first deploy
+
+---
+
+## Instrumentation: two layers of observability
+
+YB has two distinct output systems. They serve different purposes and go to different destinations. Understanding the difference is essential for debugging.
+
+### Layer 1: Stderr log stream (`yb_log` / `bar_log`)
+
+**What it is:** Human-readable timestamped text printed to stderr during every run.
+
+**Destination:** Terminal stderr (`>&2`). Visible in the terminal as the run progresses. NOT written to any file.
+
+**Format:**
+
+```
+[HH:MM:SS.mmm] message                    ← yb_log (from yb.sh / lib/common.sh)
+[bar][HH:MM:SS.mmm] message               ← bar_log (from runners/bar.sh)
+```
+
+**Examples from a real run:**
+
+```
+[13:02:08.731] engine: yabai
+[13:02:08.817] config: bar=standard bar_h=52 gap=10 pad=0,0,0,0
+[13:02:09.163] state: validate=no_state
+[13:02:09.498] workspace check: open=1
+[13:02:10.179] switch: actual space=4 (from primary wid=51895)
+[13:02:10.344] switch: bar items missing
+[13:02:10.428] switch: repairing in-place on space=4 (have=2 expected=2)
+[13:02:10.510] space-bsp: space=4 gap=10 pad=52,0,0,0 (bar=52)
+[13:02:13.140] switch: creating bar items
+[bar][13:02:13.821] start: style=standard display_id=3 space=4 label=ONTOSYS
+[bar][13:02:14.983] binding ONTOSYS_* items to space=4
+[13:02:15.514] switch: order check primary.x=2451.0000 secondary.x=726.0000
+[13:02:15.596] switch: swapping — primary was on right
+[13:02:15.711] state: written after repair
+```
+
+**What it tells you:**
+- Which orchestration path was taken (CREATE / SWITCH / REPAIR / STATE FAST PATH)
+- Every decision point with its input values (WIDs, space indices, display IDs)
+- Timing between steps (spot slow operations or races)
+- Bar operations (binding, rebinding, items-only mode)
+- State manifest reads and writes
+
+**Critical design:** Both `yb_log` and `bar_log` output to stderr via `>&2`. This is not cosmetic &mdash; it prevents log text from leaking into command substitutions. Before v0.5.1, `yb_log` went to stdout, which caused `$(some_function)` calls to capture log text into variables, corrupting `$SPACE_IDX` and bar labels. The stderr redirect is a safety invariant.
+
+**How to capture:** When running tests via `bash yb.sh ontosys 3 --debug 2>&1`, stderr is merged into stdout so both the log stream and `--debug` output appear together. For log-only capture: `bash yb.sh ontosys 3 2>run.log`.
+
+### Layer 2: Debug probe snapshots (`yb_debug`)
+
+**What it is:** Full machine-readable JSON dumps of the ENTIRE yabai window/space/sketchybar state captured at specific checkpoints during a `--debug` run.
+
+**Destination:** Individual JSON files in `log/debug/`. One file per checkpoint. Analysis.sh reads these files to produce the temporal inventory report.
+
+**When active:** Only when `--debug` flag is passed. Without it, `yb_debug()` is a no-op (`: ;`).
+
+**File naming convention:**
+
+```
+log/debug/{SESSION}_{LABEL}_{SEQ}_{STEP}.json
+
+Examples:
+  2026-02-15_13-02-05.516_ONTOSYS_01_config.json
+  2026-02-15_13-02-05.516_ONTOSYS_02_state-validate.json
+  2026-02-15_13-02-05.516_ONTOSYS_09_switch-done.json
+  2026-02-15_13-02-28.642_PUFF_01_config.json
+  2026-02-15_13-02-28.642_PUFF_10_done.json
+```
+
+| Component | Meaning |
+|-----------|---------|
+| `SESSION` | Timestamp when `yb.sh` started (shared across all probes in one run) |
+| `LABEL` | Workspace label (e.g., ONTOSYS, PUFF) |
+| `SEQ` | Zero-padded sequence number (01, 02, ...) |
+| `STEP` | Checkpoint name (see checkpoint list below) |
+
+**JSON structure of each probe file:**
+
+```json
+{
+  "timestamp": "13:04:22.714",
+  "label": "ONTOSYS",
+  "step": "state-validate",
+  "note": "result=intact",
+  "space_idx": "4",
+  "display": "3",
+  "primary_wid": "51895",
+  "secondary_wid": "52609",
+  "sketchybar": {
+    "running": true,
+    "bar_height": "52",
+    "badge_space": "4"
+  },
+  "windows": [ /* full yabai -m query --windows output */ ],
+  "spaces":  [ /* full yabai -m query --spaces output */ ]
+}
+```
+
+| Field | Source | Purpose |
+|-------|--------|---------|
+| `timestamp` | `python3 datetime` | Exact time this probe fired |
+| `label` | `$LABEL` shell var | Which workspace this probe belongs to |
+| `step` | first arg to `yb_debug` | Checkpoint name (used for ordering and coverage) |
+| `note` | second arg to `yb_debug` | Free-form context string |
+| `space_idx` | `$SPACE_IDX` shell var | Current target space index (empty if not yet resolved) |
+| `display` | `$DISPLAY` shell var | Target display CGDirectDisplayID |
+| `primary_wid` | `$PRIMARY_WID` shell var | Primary window ID (empty if not yet found) |
+| `secondary_wid` | `$SECONDARY_WID` shell var | Secondary window ID (empty if not yet found) |
+| `sketchybar.running` | `pgrep sketchybar` | Whether sketchybar process is alive |
+| `sketchybar.bar_height` | `sketchybar --query bar` | Bar height at this moment |
+| `sketchybar.badge_space` | `sketchybar --query ${LABEL}_badge` | Space the badge item is bound to (from `associated_space_mask` bitmask) |
+| `windows` | `yabai -m query --windows` | **Full window dump** &mdash; every window with id, app, title, frame, space, display |
+| `spaces` | `yabai -m query --spaces` | **Full space dump** &mdash; every space with index, display, uuid, is-visible, windows list |
+
+**What it tells you that logs can't:** The `windows` array is the key. It captures the position, space, and identity of EVERY window on the system at that moment. By comparing consecutive probes, analysis.sh detects windows that moved between spaces, appeared (SPAWN), or disappeared (VANISH) &mdash; even if the orchestrator didn't log it.
+
+### How the two layers relate
+
+```
+Layer 1 (log stream)               Layer 2 (debug probes)
+━━━━━━━━━━━━━━━━━━━━               ━━━━━━━━━━━━━━━━━━━━━━
+stderr text                         JSON files in log/debug/
+every run                           only with --debug
+tells you WHAT happened             tells you the FULL STATE at each point
+human reads during run              analysis.sh reads after run
+no window/space data                complete yabai + sketchybar dump
+sequential narrative                point-in-time snapshots
+```
+
+Both fire at the same checkpoints. A `yb_log(...)` call and a `yb_debug(...)` call often sit next to each other in the code. The log line tells you the decision; the probe captures the state that led to it.
+
+---
+
+## Checkpoints
+
+Debug probes fire at fixed points in the orchestration flow. The checkpoint name encodes which phase of the pipeline is active.
+
+### Checkpoint sequence (canonical order)
+
+```
+ #  Checkpoint         Path        What just happened
+──  ──────────────     ────────    ──────────────────────────────────────
+ 1  config             both        Layout resolved, app handlers loaded
+ 2  state-validate     both        State manifest checked against live state
+ 3  workspace-check    both*       app_code_is_open() checked (* skipped if state=intact)
+ 4  switch-locate      switch      Primary window found via yabai query
+ 5  switch-bsp         switch      Space BSP configured, space focused
+ 6  switch-primary     switch      Primary window confirmed/opened on space
+ 7  switch-secondary   switch      Secondary window confirmed/opened on space
+ 8  switch-bar         switch      Bar items created/rebound
+ 9  switch-done        switch      SWITCH complete — exit
+10  pre-create         create      About to create virtual desktop
+11  post-space         create      Desktop created, BSP configured
+12  post-bar           create      Bar items created and bound
+13  post-poll          create      Primary window found (after polling)
+14  post-move          create      Windows moved to target space
+15  post-layout        create      BSP layout settled, order enforced
+16  done               create      CREATE complete — exit
+```
+
+**Path detection:** Analysis.sh infers which path was taken by which checkpoints fired:
+- Has `switch-done` → **switch** (REPAIR or FAST PATH)
+- Has `pre-create` but no `switch-done` → **create**
+- Has `switch-locate` AND `pre-create` → **switch→create fallthrough** (display migration)
+- Only `config` + `state-validate` + `switch-done` → **state fast path** (intact)
+
+The state fast path (intact) is the ideal second run: only 3 probes, zero discovery.
+
+---
+
+## Analysis pipeline (`runners/analysis.sh`)
+
+Analysis.sh reads the JSON probe files for a session and produces a multi-section report. It is invoked automatically at the end of every `--debug` run, or can be run standalone.
+
+**Invocation:**
+```bash
+./runners/analysis.sh <session_id>     # specific session
+./runners/analysis.sh --latest         # most recent session
+./runners/analysis.sh --all            # all sessions combined
+```
+
+**Session resolution:** The session ID (e.g., `2026-02-15_13-02-05.516`) is the timestamp prefix. Analysis finds all JSON files with that prefix, sorts them, and processes them in order.
+
+### Section-by-section breakdown
+
+#### 1. Timeline
+
+Lists every probe in chronological order with timestamp, label, step, space index, and note.
+
+**What to check:** The path taken (create vs switch), the timing gaps between steps, whether space_idx appears at the right point.
+
+#### 2. Checkpoint Coverage
+
+For each workspace label, shows which checkpoints fired (✓) and which are missing (✗ MISSING). Analysis knows which checkpoints are expected for each path type and only flags MISSING for expected ones.
+
+**What to check:** For a switch path, you expect config → state-validate → switch-* → switch-done. For create, you expect config → workspace-check → pre-create → post-* → done. Missing checkpoints mean the code skipped a step or crashed.
+
+#### 3. Window Travel
+
+The core temporal inventory. A matrix showing every non-sticky window's space assignment at every checkpoint. Columns are checkpoints, rows are window IDs.
+
+**How it works:** For each probe file, analysis extracts every window from the `windows` array and records its `.space` value. Windows that don't exist in a probe show `·` (not yet spawned or vanished). Windows that changed space between consecutive probes show `→s5` (moved to space 5).
+
+**What to check:**
+- Windows owned by workspace A stay on A's space throughout
+- Windows owned by workspace B stay on B's space throughout
+- No window moves during SWITCH/REPAIR (moves only during CREATE step 4b)
+- New WIDs (`·` → `sN`) only appear between post-bar and post-poll (the app open window)
+
+#### 4. Anomalies
+
+Diff-based detection between consecutive probes. For each pair of adjacent snapshots, analysis compares the window lists and flags:
+
+| Event | Meaning | When it's OK |
+|-------|---------|--------------|
+| `SPAWN wid=N (App) on sN` | Window appeared that wasn't in the previous probe | During CREATE, between post-bar and post-poll (apps being opened) |
+| `MOVED wid=N (App) sN → sN` | Window changed space between probes | During CREATE, between post-poll and post-move (step 4b moves) |
+| `VANISH wid=N (App)` | Window disappeared between probes | During `yb down` or close operations |
+
+**What to check:** SPAWNs during SWITCH/REPAIR are bugs (no new windows should be created). MOVEs during SWITCH are bugs (windows should already be in place). Any VANISH during normal operation is suspicious.
+
+#### 5. Shared Windows
+
+Checks whether any window ID is claimed by multiple workspace labels. A WID should belong to exactly one workspace. This catches the case where two workspaces grab the same window (e.g., both find the same Code window by title match).
+
+**How it works:** For each label's final snapshot, collects all WIDs on that label's space. Also checks `secondary_wid` across all snapshots. If the same WID appears under different labels, it's flagged.
+
+#### 5b. Merged Workspaces
+
+Checks whether any space index has multiple workspace labels assigned to it. Two workspaces should never end up on the same space.
+
+**How it works:** For each label, reads `space_idx` from its final snapshot. If two labels have the same space_idx, flags as CRITICAL.
+
+#### 6. Window Order
+
+Checks that primary window (Code) is to the left of secondary window (iTerm) in the final snapshot.
+
+**How it works:** Reads `primary_wid` and `secondary_wid` from the final snapshot, looks up their `.frame.x` in the `windows` array, compares. primary.x < secondary.x = correct.
+
+#### 7. Bar Health
+
+Tracks sketchybar state across checkpoints using the `sketchybar` object embedded in each probe. Shows running status, bar height, and which space the badge item is bound to.
+
+**How it works:** The `badge_space` field comes from the probe's live sketchybar query: `sketchybar --query ${LABEL}_badge` → `associated_space_mask` bitmask → decoded to space number. If badge_space doesn't match space_idx, items are bound to the wrong space.
+
+#### 7b. State Manifest
+
+Reads `state/manifest.json` and shows each workspace entry with space index, UUID prefix, app/WID pairs, and liveness (queries yabai to check if the WID still exists).
+
+#### 8. Sketchybar Config (live)
+
+Live query of the running sketchybar instance at analysis time. Shows bar-level config (position, height, color) and per-item details (drawing state, associated_space, display) for all 7 items per workspace.
+
+**How it works:** Runs `sketchybar --query bar` and `sketchybar --query ${LABEL}_${suffix}` for each of the 7 suffixes (badge, label, path, code, term, folder, close). Decodes the `associated_space_mask` bitmask for each item.
+
+#### 8b. Bar Sanity
+
+Live checks that detect the three failure classes that v0.6.1 was built to catch:
+
+1. **Unbound items** &mdash; badge item has `associated_space_mask=0`, meaning items appear on ALL spaces (the overlap bug). Detected by checking each label's badge mask.
+
+2. **Duplicate bindings** &mdash; two different labels bound to the same space. Detected by collecting the decoded space from each label's badge and checking for duplicates.
+
+3. **Label contamination** &mdash; path item's label value contains log text (`[bar]`, `workspace check`, timestamp patterns) or unparsed JSON (`{`, `":`). Detected by running string pattern matches against the live `label.value` from `sketchybar --query ${LABEL}_path`.
+
+#### 9. Summary
+
+Total snapshot count, labels found, anomaly count, and final space/WID for each workspace.
 
 ---
 
@@ -217,13 +487,15 @@ After every `--debug` run, analysis.sh produces sections that MUST be checked:
 These indicate bugs, not just warnings:
 
 - `SPAWN` during a SWITCH path (window opened when it shouldn't have been)
-- `MOVE` of a window between spaces (window drifted or was moved incorrectly)
-- `STEAL` (WID claimed by different workspace)
-- `bar_stale` or `STALE` in Bar Health (items bound to wrong space)
-- `FAIL` in Bar Sanity (overlaps, unbound items, contamination)
+- `MOVED` of a window between spaces (window drifted or was moved incorrectly)
+- `VANISH` of a window during normal operation
 - Shared Windows: any entry at all
 - Merged Workspaces: any entry at all
+- `STALE` in Bar Health (items bound to wrong space)
+- `FAIL` in Bar Sanity (overlaps, unbound items, contamination)
 - State Manifest: `stale` liveness for any entry
+- Window Order: `REVERSED` for any workspace
+- Checkpoint Coverage: MISSING for expected checkpoints
 
 ---
 
@@ -306,17 +578,18 @@ Run the YB standard pair test sequence.
 
 ## Behavior
 
-1. Execute the test cycles using Bash tool
-2. After each cycle, read the analysis output carefully
-3. Check every section against the analysis checklist in SPEC.TESTING.md
-4. Report results in a summary table:
+1. Read SPEC.TESTING.md to load test definitions and pass criteria
+2. Execute the test cycles using Bash tool
+3. After each cycle, read the analysis output carefully
+4. Check every section against the analysis checklist in SPEC.TESTING.md
+5. Report results in a summary table:
    - Cycle number
    - Path taken per workspace (CREATE/REPAIR/intact)
    - Snapshot count
    - Anomaly count
    - Bar Sanity result (PASS/FAIL)
-5. If any failure is detected, stop and report the exact section and values
-6. Use the standard test pair: ontosys + puff on display 3
+6. If any failure is detected, stop and report the exact section and values
+7. Use the standard test pair: ontosys + puff on display 3
 ```
 
 ### Skill prompt structure

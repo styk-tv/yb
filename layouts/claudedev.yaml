@@ -1,6 +1,6 @@
 # Claude Code development workspace
 terminal: iterm
-cmd: unset CLAUDECODE && claude
+cmd: unset CLAUDECODE && claude --dangerously-skip-permissions
 mode: tile
 bar: standard
 zoom: 1
