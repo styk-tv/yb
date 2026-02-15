@@ -307,6 +307,13 @@ ensure_services() {
     if ! pgrep -q sketchybar 2>/dev/null; then
         echo "[services] sketchybar not running — starting..."
         brew services start sketchybar 2>/dev/null
+        sleep 1
+        # Fallback: if brew services failed, start directly
+        if ! pgrep -q sketchybar 2>/dev/null; then
+            echo "[services] brew services failed — starting sketchybar directly..."
+            sketchybar &>/dev/null &
+            sleep 0.5
+        fi
         changed=1
     fi
 
@@ -324,7 +331,7 @@ ensure_services() {
             echo "[services] WARN: yabai started but IPC not responding — check Accessibility permissions"
         fi
 
-        # Verify sketchybar
+        # Final sketchybar verification
         if ! pgrep -q sketchybar 2>/dev/null; then
             echo "[services] WARN: sketchybar failed to start"
         fi

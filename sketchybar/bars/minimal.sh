@@ -17,6 +17,7 @@ if [ "$ITEMS_ONLY" != "--items-only" ]; then
         height=24 \
         display=all \
         topmost=off \
+        drawing=on \
         blur_radius=0 \
         color=0xcc020d06 \
         corner_radius=0 \
