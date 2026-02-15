@@ -464,6 +464,72 @@ yb <workspace-B> <display> --debug    # switch back to B
 
 ---
 
+### T8. Sketchybar service restart (BAR RECOVERY)
+
+**Precondition:** Workspace deployed and running (state=intact)
+
+**Sequence:**
+```bash
+brew services restart sketchybar       # kill+restart — all items gone
+sleep 1
+yb <workspace> <display> --debug
+```
+
+**Expected:**
+| Check | Criterion |
+|-------|-----------|
+| State result | `bar_missing` (badge item gone after restart) |
+| Path | Creates bar items, binds to correct space, exits |
+| Snapshots | 3 (config, state-validate, switch-done) |
+| Windows | Untouched — no reopening, no moving, no discovery |
+| Spaces | Untouched — no creation, existing space reused |
+| Bar items | All 7 items recreated and bound to correct space |
+| Bar Sanity | PASS |
+
+**Difference from T5:** T5 removes specific items; T8 restarts the entire service. More realistic — services restart after crashes, macOS updates, sleep/wake cycles.
+
+**Debug proof (v0.6.1, 2026-02-15):**
+```
+state: validate=bar_missing
+state: bar missing — creating
+[bar] no YB items — full config mode
+[bar] creating YB_* items (style=standard display=1 items_only=)
+[bar] binding YB_* items to space=2
+Anomalies: 0
+```
+
+**Known edge case — zombie items:** If sketchybar retains item metadata but fails to render them (bounding_rect at -9999,-9999 while `associated_space_mask` is correct), state validation returns `intact` (false positive). A full service restart clears zombies by destroying all items, forcing recreation. This edge case is not yet covered by validation.
+
+---
+
+### T9. Zombie bar detection (FALSE POSITIVE)
+
+**Precondition:** Workspace deployed with working bar
+
+**Sequence:**
+1. Trigger a bar render failure (display reconfiguration, sleep/wake, sketchybar config reload)
+2. Verify items exist: `sketchybar --query ${LABEL}_badge` returns valid JSON
+3. Verify items don't render: `bounding_rects.origin = [-9999, -9999]`
+4. Run `yb <workspace> <display> --debug`
+
+**Expected (current behavior — known bug):**
+| Check | Criterion |
+|-------|-----------|
+| State result | `intact` (FALSE POSITIVE) |
+| Bar items | Exist but invisible — bounding_rect off-screen |
+| User sees | No bar on display |
+
+**Expected (after fix):**
+| Check | Criterion |
+|-------|-----------|
+| State result | `bar_stale` or `bar_missing` |
+| Path | Recreate bar items |
+| Bar items | Visible after recreation |
+
+**Detection gap:** `yb_state_validate` checks item existence and space binding, but not render state. The `bounding_rects.origin` field could be checked to detect zombie items.
+
+---
+
 ## Analysis checklist
 
 After every `--debug` run, analysis.sh produces sections that MUST be checked:
@@ -555,6 +621,7 @@ Bar Sanity: PASS on every cycle.
 | v0.5.1 | Log stdout contamination &mdash; `yb_log` output leaked into `$SPACE_IDX` | T1 analysis: Bar Sanity detected corrupted path label |
 | v0.6.0 | Subshell variable loss &mdash; `_SV_SPACE_IDX` empty after `$()` | T2: `space=` empty in log, `focus-space: WARN tgt=(pos=-1)` |
 | v0.6.1 | `no_state` not echoed &mdash; `yb_state_validate` returned empty | T1: `validate=` instead of `validate=no_state` in log |
+| v0.6.1 | Zombie bar items &mdash; items exist in sketchybar but bounding_rect at -9999,-9999, not rendering | T9: `intact` false positive, user sees no bar. Workaround: `brew services restart sketchybar` + re-run (T8) |
 
 ---
 
