@@ -14,7 +14,7 @@ yb_ts() {
 }
 
 yb_log() {
-    echo "[$(yb_ts)] $*"
+    echo "[$(yb_ts)] $*" >&2
 }
 
 # --- Yabai ---

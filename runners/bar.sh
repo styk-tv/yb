@@ -17,7 +17,7 @@ _bar_ts() {
     python3 -c "import datetime; print(datetime.datetime.now().strftime('%H:%M:%S.%f')[:12], end='')"
 }
 bar_log() {
-    echo "[bar][$(_bar_ts)] $*"
+    echo "[bar][$(_bar_ts)] $*" >&2
 }
 
 # --- Parse args ---

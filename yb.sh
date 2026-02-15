@@ -517,129 +517,46 @@ if [ "$_HAS_WORKSPACE" -eq 1 ]; then
             [ -n "$PRIMARY_WID" ] && _HAVE=$((_HAVE + 1))
             [ "$MODE" = "tile" ] && [ -n "$SECONDARY_WID" ] && _HAVE=$((_HAVE + 1))
 
-            if [ "$_HAVE" -ge "$_EXPECTED" ]; then
-                # All our windows found — check if workspace is fully intact
-                _INTACT=1
+            # --- Intact check: all expected windows present + correct layout? ---
+            _INTACT=1
 
-                # Order check (tile mode): primary should be left of secondary
-                if [ "$MODE" = "tile" ] && [ -n "$PRIMARY_WID" ] && [ -n "$SECONDARY_WID" ]; then
-                    _PX=$(yabai -m query --windows --window "$PRIMARY_WID" 2>/dev/null | jq -r '.frame.x // 99999')
-                    _SX=$(yabai -m query --windows --window "$SECONDARY_WID" 2>/dev/null | jq -r '.frame.x // 0')
-                    if [ "${_PX%.*}" -gt "${_SX%.*}" ] 2>/dev/null; then
-                        _INTACT=0
-                        yb_log "switch: wrong order (primary.x=${_PX} > secondary.x=${_SX})"
-                    fi
+            # Windows present?
+            if [ "$_HAVE" -lt "$_EXPECTED" ]; then
+                _INTACT=0
+                yb_log "switch: missing windows (have=$_HAVE expected=$_EXPECTED)"
+            fi
+
+            # Order check (tile mode): primary should be left of secondary
+            if [ "$_INTACT" -eq 1 ] && [ "$MODE" = "tile" ] && [ -n "$PRIMARY_WID" ] && [ -n "$SECONDARY_WID" ]; then
+                _PX=$(yabai -m query --windows --window "$PRIMARY_WID" 2>/dev/null | jq -r '.frame.x // 99999')
+                _SX=$(yabai -m query --windows --window "$SECONDARY_WID" 2>/dev/null | jq -r '.frame.x // 0')
+                if [ "${_PX%.*}" -gt "${_SX%.*}" ] 2>/dev/null; then
+                    _INTACT=0
+                    yb_log "switch: wrong order (primary.x=${_PX} > secondary.x=${_SX})"
                 fi
+            fi
 
-                # Bar items check
+            # Bar items check
+            if [ "$_INTACT" -eq 1 ]; then
                 _BAR_QR=$(sketchybar --query "${LABEL}_badge" 2>&1 | head -1)
                 if [ -z "$_BAR_QR" ] || [[ "$_BAR_QR" == *"not found"* ]]; then
                     _INTACT=0
                     yb_log "switch: bar items missing"
                 fi
+            fi
 
-                if [ "$_INTACT" -eq 1 ]; then
-                    # === FAST PATH: workspace fully intact — focus only, zero layout changes ===
-                    yb_log "switch: workspace intact on space=$SPACE_IDX — focus only"
-                    yb_focus_space "$SPACE_IDX" "$DISPLAY"
-                    sleep 0.2
-                    if type "app_${PRIMARY_APP}_focus" &>/dev/null; then
-                        "app_${PRIMARY_APP}_focus" "$WORK_PATH"
-                    fi
-                    # Cheap rebind (keeps bar space mapping current)
-                    for _suffix in badge label path code term folder close; do
-                        sketchybar --set "${LABEL}_${_suffix}" associated_space="$SPACE_IDX" 2>/dev/null
-                    done
-                    yb_debug "switch-done" "workspace intact — focused"
-                    if [ "$YB_DEBUG" -eq 1 ]; then
-                        echo ""
-                        "$REPO_ROOT/runners/analysis.sh" "$YB_DEBUG_SESSION"
-                    fi
-                    echo ""
-                    echo "=== Switched: $LABEL ==="
-                    exit 0
-                fi
-
-                # === REFRESH PATH: windows present but need fixing ===
-                yb_log "switch: windows on space=$SPACE_IDX — refreshing"
-
-                IFS=',' read -r _PT _PB _PL _PR <<< "$PADDING"
-                yb_space_bsp "$SPACE_IDX" "$GAP" "$_PT" "$_PB" "$_PL" "$_PR" "$BAR_HEIGHT"
-
-                yb_log "switch: focusing space=$SPACE_IDX on display=$DISPLAY"
+            if [ "$_INTACT" -eq 1 ]; then
+                # === FAST PATH: workspace fully intact — focus only, zero layout changes ===
+                yb_log "switch: workspace intact on space=$SPACE_IDX — focus only"
                 yb_focus_space "$SPACE_IDX" "$DISPLAY"
-                sleep 0.3
-                yb_debug "switch-bsp" "space=$SPACE_IDX BSP configured + focused"
-
-                # Bar
-                yb_log "switch: checking namespace ${LABEL}_* items..."
-                _NS_FOUND=0; _NS_MISSING=0
-                for _suffix in badge label path code term folder close; do
-                    _item="${LABEL}_${_suffix}"
-                    _qr=$(sketchybar --query "$_item" 2>&1 | head -1)
-                    if [ -n "$_qr" ] && [[ "$_qr" != *"not found"* ]]; then
-                        _NS_FOUND=$((_NS_FOUND + 1))
-                    else
-                        _NS_MISSING=$((_NS_MISSING + 1))
-                        yb_log "switch: namespace item MISSING: $_item"
-                    fi
-                done
-                yb_log "switch: namespace check: found=$_NS_FOUND missing=$_NS_MISSING"
-                if [ "$_NS_MISSING" -eq 0 ]; then
-                    yb_log "switch: all ${LABEL}_* items exist — rebinding to space=$SPACE_IDX"
-                    for _suffix in badge label path code term folder close; do
-                        sketchybar --set "${LABEL}_${_suffix}" associated_space="$SPACE_IDX" 2>/dev/null
-                    done
-                    sketchybar --update 2>/dev/null
-                else
-                    yb_log "switch: ${_NS_MISSING} items missing — creating full bar"
-                    "$REPO_ROOT/runners/bar.sh" --display "$DISPLAY" --style "$BAR_STYLE" --label "$LABEL" --path "$WORK_PATH" --space "$SPACE_IDX"
-                fi
-                yb_debug "switch-bar" "bar handled for space=$SPACE_IDX"
-
-                # Focus primary
-                yb_log "switch: primary $PRIMARY_APP wid=${PRIMARY_WID:-none} on space=$SPACE_IDX"
+                sleep 0.2
                 if type "app_${PRIMARY_APP}_focus" &>/dev/null; then
-                    yb_log "switch: focusing $PRIMARY_APP"
                     "app_${PRIMARY_APP}_focus" "$WORK_PATH"
                 fi
-                yb_debug "switch-focus" "primary $PRIMARY_APP wid=${PRIMARY_WID:-none}"
-
-                # Ensure secondary on this space
-                if [ "$SECONDARY_APP" != "none" ] && [ -z "$SECONDARY_WID" ]; then
-                    # Not on target space — check other spaces
-                    SECONDARY_WID=$("app_${SECONDARY_APP}_find" "$WORK_PATH")
-                    if [ -n "$SECONDARY_WID" ]; then
-                        yb_log "switch: moving secondary wid=$SECONDARY_WID → space=$SPACE_IDX"
-                        yabai -m window "$SECONDARY_WID" --space "$SPACE_IDX" 2>/dev/null
-                    else
-                        yb_log "switch: secondary $SECONDARY_APP not found — opening"
-                        YB_LAST_OPENED_WID=""
-                        "app_${SECONDARY_APP}_open" "$WORK_PATH" "$CMD"
-                        if [ -n "$YB_LAST_OPENED_WID" ]; then
-                            SECONDARY_WID="$YB_LAST_OPENED_WID"
-                            yb_log "switch: new secondary wid=$SECONDARY_WID"
-                            _SS=$(yb_window_space "$SECONDARY_WID")
-                            [ "$_SS" != "$SPACE_IDX" ] && yabai -m window "$SECONDARY_WID" --space "$SPACE_IDX" 2>/dev/null
-                        fi
-                    fi
-                fi
-                yb_debug "switch-secondary" "secondary=$SECONDARY_APP wid=${SECONDARY_WID:-none}"
-
-                # Fix window order: primary left, secondary right
-                if [ -n "$PRIMARY_WID" ] && [ -n "$SECONDARY_WID" ]; then
-                    _PX=$(yabai -m query --windows --window "$PRIMARY_WID" 2>/dev/null | jq -r '.frame.x // 99999')
-                    _SX=$(yabai -m query --windows --window "$SECONDARY_WID" 2>/dev/null | jq -r '.frame.x // 0')
-                    yb_log "switch: order check primary.x=${_PX} secondary.x=${_SX}"
-                    if [ "${_PX%.*}" -gt "${_SX%.*}" ] 2>/dev/null; then
-                        yb_log "switch: swapping — primary was on right"
-                        yabai -m window "$PRIMARY_WID" --swap "$SECONDARY_WID" 2>/dev/null
-                    else
-                        yb_log "switch: order correct (primary left, secondary right)"
-                    fi
-                fi
-
-                yb_debug "switch-done" "workspace switched"
+                for _suffix in badge label path code term folder close; do
+                    sketchybar --set "${LABEL}_${_suffix}" associated_space="$SPACE_IDX" 2>/dev/null
+                done
+                yb_debug "switch-done" "workspace intact — focused"
                 if [ "$YB_DEBUG" -eq 1 ]; then
                     echo ""
                     "$REPO_ROOT/runners/analysis.sh" "$YB_DEBUG_SESSION"
@@ -649,12 +566,101 @@ if [ "$_HAS_WORKSPACE" -eq 1 ]; then
                 exit 0
             fi
 
-            # === REBUILD: our windows missing from space — close stale + fall through to create ===
-            yb_log "switch: missing windows on space=$SPACE_IDX (have=$_HAVE expected=$_EXPECTED) — rebuilding"
-            "app_${PRIMARY_APP}_close" "$WORK_PATH" 2>/dev/null
-            [ "$SECONDARY_APP" != "none" ] && "app_${SECONDARY_APP}_close" "$WORK_PATH" 2>/dev/null
-            sleep 0.5
-            # Fall through to CREATE NEW WORKSPACE
+            # === REPAIR PATH: fix in-place — never close existing, never fall through to CREATE ===
+            yb_log "switch: repairing in-place on space=$SPACE_IDX (have=$_HAVE expected=$_EXPECTED)"
+
+            IFS=',' read -r _PT _PB _PL _PR <<< "$PADDING"
+            yb_space_bsp "$SPACE_IDX" "$GAP" "$_PT" "$_PB" "$_PL" "$_PR" "$BAR_HEIGHT"
+            yb_focus_space "$SPACE_IDX" "$DISPLAY"
+            sleep 0.3
+            yb_debug "switch-bsp" "space=$SPACE_IDX BSP configured + focused"
+
+            # Ensure primary on this space
+            if [ -z "$PRIMARY_WID" ]; then
+                PRIMARY_WID=$("app_${PRIMARY_APP}_find" "$WORK_PATH")
+                if [ -n "$PRIMARY_WID" ]; then
+                    _ps=$(yb_window_space "$PRIMARY_WID")
+                    if [ "$_ps" != "$SPACE_IDX" ]; then
+                        yb_log "switch: moving primary wid=$PRIMARY_WID → space=$SPACE_IDX"
+                        yabai -m window "$PRIMARY_WID" --space "$SPACE_IDX" 2>/dev/null
+                    fi
+                else
+                    yb_log "switch: primary not found — opening $PRIMARY_APP"
+                    "app_${PRIMARY_APP}_open" "$WORK_PATH"
+                    sleep 3
+                    for _i in $(seq 1 10); do
+                        PRIMARY_WID=$("app_${PRIMARY_APP}_find" "$WORK_PATH")
+                        [ -n "$PRIMARY_WID" ] && break
+                        sleep 1
+                    done
+                    if [ -n "$PRIMARY_WID" ]; then
+                        _ps=$(yb_window_space "$PRIMARY_WID")
+                        [ "$_ps" != "$SPACE_IDX" ] && yabai -m window "$PRIMARY_WID" --space "$SPACE_IDX" 2>/dev/null
+                        yb_log "switch: primary wid=$PRIMARY_WID opened"
+                    fi
+                fi
+            fi
+            if type "app_${PRIMARY_APP}_focus" &>/dev/null; then
+                "app_${PRIMARY_APP}_focus" "$WORK_PATH"
+            fi
+            yb_debug "switch-primary" "primary=$PRIMARY_APP wid=${PRIMARY_WID:-none}"
+
+            # Ensure secondary on this space
+            if [ "$SECONDARY_APP" != "none" ] && [ -z "$SECONDARY_WID" ]; then
+                SECONDARY_WID=$("app_${SECONDARY_APP}_find" "$WORK_PATH")
+                if [ -n "$SECONDARY_WID" ]; then
+                    _ss=$(yb_window_space "$SECONDARY_WID")
+                    if [ "$_ss" != "$SPACE_IDX" ]; then
+                        yb_log "switch: moving secondary wid=$SECONDARY_WID → space=$SPACE_IDX"
+                        yabai -m window "$SECONDARY_WID" --space "$SPACE_IDX" 2>/dev/null
+                    fi
+                else
+                    yb_log "switch: secondary not found — opening $SECONDARY_APP"
+                    YB_LAST_OPENED_WID=""
+                    "app_${SECONDARY_APP}_open" "$WORK_PATH" "$CMD"
+                    if [ -n "$YB_LAST_OPENED_WID" ]; then
+                        SECONDARY_WID="$YB_LAST_OPENED_WID"
+                        _ss=$(yb_window_space "$SECONDARY_WID")
+                        [ "$_ss" != "$SPACE_IDX" ] && yabai -m window "$SECONDARY_WID" --space "$SPACE_IDX" 2>/dev/null
+                        yb_log "switch: secondary wid=$SECONDARY_WID opened"
+                    fi
+                fi
+            fi
+            yb_debug "switch-secondary" "secondary=$SECONDARY_APP wid=${SECONDARY_WID:-none}"
+
+            # Bar
+            _BAR_QR=$(sketchybar --query "${LABEL}_badge" 2>&1 | head -1)
+            if [ -z "$_BAR_QR" ] || [[ "$_BAR_QR" == *"not found"* ]]; then
+                yb_log "switch: creating bar items"
+                "$REPO_ROOT/runners/bar.sh" --display "$DISPLAY" --style "$BAR_STYLE" --label "$LABEL" --path "$WORK_PATH" --space "$SPACE_IDX"
+            else
+                yb_log "switch: rebinding bar to space=$SPACE_IDX"
+                for _suffix in badge label path code term folder close; do
+                    sketchybar --set "${LABEL}_${_suffix}" associated_space="$SPACE_IDX" 2>/dev/null
+                done
+                sketchybar --update 2>/dev/null
+            fi
+            yb_debug "switch-bar" "bar handled for space=$SPACE_IDX"
+
+            # Fix window order: primary left, secondary right
+            if [ -n "$PRIMARY_WID" ] && [ -n "$SECONDARY_WID" ]; then
+                _PX=$(yabai -m query --windows --window "$PRIMARY_WID" 2>/dev/null | jq -r '.frame.x // 99999')
+                _SX=$(yabai -m query --windows --window "$SECONDARY_WID" 2>/dev/null | jq -r '.frame.x // 0')
+                yb_log "switch: order check primary.x=${_PX} secondary.x=${_SX}"
+                if [ "${_PX%.*}" -gt "${_SX%.*}" ] 2>/dev/null; then
+                    yb_log "switch: swapping — primary was on right"
+                    yabai -m window "$PRIMARY_WID" --swap "$SECONDARY_WID" 2>/dev/null
+                fi
+            fi
+
+            yb_debug "switch-done" "workspace repaired"
+            if [ "$YB_DEBUG" -eq 1 ]; then
+                echo ""
+                "$REPO_ROOT/runners/analysis.sh" "$YB_DEBUG_SESSION"
+            fi
+            echo ""
+            echo "=== Switched: $LABEL ==="
+            exit 0
         fi
     else
         yb_log "switch: WARN window still not found after focus — creating new"
