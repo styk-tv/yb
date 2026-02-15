@@ -590,6 +590,86 @@ echo "└───────────────────────�
 echo ""
 
 # ──────────────────────────────────────────────────────────────
+# 8b. BAR SANITY — overlaps, unbound items, label contamination
+# ──────────────────────────────────────────────────────────────
+echo "┌─ Bar Sanity ─────────────────────────────────────────────────────┐"
+echo "│"
+
+if pgrep -q sketchybar 2>/dev/null; then
+    _OVERLAP_FOUND=0
+    _CONTAM_FOUND=0
+    _UNBOUND_FOUND=0
+
+    # Collect space bindings per label (from badge items)
+    _BIND_LIST=""
+    for lbl in $LABELS; do
+        [ -z "$lbl" ] && continue
+        _bj=$(sketchybar --query "${lbl}_badge" 2>/dev/null)
+        if [ -n "$_bj" ] && ! echo "$_bj" | grep -q "not found"; then
+            _mask=$(echo "$_bj" | jq -r '.geometry.associated_space_mask // 0' 2>/dev/null)
+            _sp="unbound"
+            if [ "$_mask" -gt 0 ] 2>/dev/null; then
+                _b=$_mask _n=0
+                while [ "$_b" -gt 1 ]; do _b=$((_b / 2)); _n=$((_n + 1)); done
+                _sp="$_n"
+            fi
+            _BIND_LIST="${_BIND_LIST}${_sp}|${lbl}\n"
+
+            if [ "$_sp" = "unbound" ]; then
+                echo "│  FAIL: ${lbl} items NOT BOUND to any space (visible on ALL spaces)" | tee -a "$ANOMALY_FILE"
+                _UNBOUND_FOUND=1
+            fi
+        fi
+    done
+
+    # Check for overlaps: multiple labels bound to same space
+    if [ -n "$_BIND_LIST" ]; then
+        _DUP_BIND=$(echo -e "$_BIND_LIST" | grep -v '^$' | cut -d'|' -f1 | sort | uniq -d)
+        for _dsp in $_DUP_BIND; do
+            [ "$_dsp" = "unbound" ] && continue
+            _dup_labels=$(echo -e "$_BIND_LIST" | grep "^${_dsp}|" | cut -d'|' -f2 | tr '\n' '+' | sed 's/+$//')
+            echo "│  FAIL: Multiple workspaces on space $_dsp → $_dup_labels (items overlap)" | tee -a "$ANOMALY_FILE"
+            _OVERLAP_FOUND=1
+        done
+    fi
+
+    # Check path labels for contamination (log text, unparsed JSON)
+    for lbl in $LABELS; do
+        [ -z "$lbl" ] && continue
+        _pj=$(sketchybar --query "${lbl}_path" 2>/dev/null)
+        if [ -n "$_pj" ] && ! echo "$_pj" | grep -q "not found"; then
+            _path_label=$(echo "$_pj" | jq -r '.label.value // ""' 2>/dev/null)
+            if [ -n "$_path_label" ]; then
+                # Check for log text contamination
+                if [[ "$_path_label" == *"[bar]"* ]] || [[ "$_path_label" == *"workspace check"* ]] || \
+                   [[ "$_path_label" == *"[20"* ]] || [[ "$_path_label" =~ \[[0-9]{2}:[0-9]{2}: ]]; then
+                    echo "│  FAIL: ${lbl}_path label CONTAMINATED: '$_path_label'" | tee -a "$ANOMALY_FILE"
+                    _CONTAM_FOUND=1
+                fi
+                # Check for unparsed JSON
+                if [[ "$_path_label" == *"{"* ]] || [[ "$_path_label" == *'":'* ]]; then
+                    echo "│  FAIL: ${lbl}_path label contains UNPARSED JSON: '$_path_label'" | tee -a "$ANOMALY_FILE"
+                    _CONTAM_FOUND=1
+                fi
+            fi
+        fi
+    done
+
+    if [ "$_OVERLAP_FOUND" -eq 0 ] && [ "$_CONTAM_FOUND" -eq 0 ] && [ "$_UNBOUND_FOUND" -eq 0 ]; then
+        echo "│  ✓ No overlaps, no unbound items, no label contamination"
+    fi
+else
+    echo "│  sketchybar not running — skipped"
+fi
+
+echo "│"
+echo "└────────────────────────────────────────────────────────────────┘"
+echo ""
+
+# Re-count anomalies after bar sanity checks
+ANOMALY_COUNT=$(wc -l < "$ANOMALY_FILE" 2>/dev/null | tr -d ' ')
+
+# ──────────────────────────────────────────────────────────────
 # 9. SUMMARY
 # ──────────────────────────────────────────────────────────────
 echo "┌─ Summary ──────────────────────────────────────────────────────┐"

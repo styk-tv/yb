@@ -492,7 +492,9 @@ yb_log "config: bar=$BAR_STYLE bar_h=$BAR_HEIGHT gap=$GAP pad=$PADDING"
 yb_debug "config" "resolved target=$TARGET primary=$PRIMARY_APP secondary=$SECONDARY_APP"
 
 # --- 1b. STATE VALIDATION (fast path — before any discovery) ---
-_STATE_RESULT=$(yb_state_validate "$LABEL")
+# Call directly (not in subshell) so _SV_SPACE_IDX/_SV_PRIMARY_WID/_SV_SECONDARY_WID propagate
+yb_state_validate "$LABEL"
+_STATE_RESULT="$_SV_RESULT"
 yb_log "state: validate=$_STATE_RESULT"
 yb_debug "state-validate" "result=$_STATE_RESULT"
 

@@ -43,10 +43,22 @@ if [ -z "$STYLE" ]; then
     exit 1
 fi
 
+# Validate SPACE_IDX is numeric (defense against stdout contamination)
+if [ -n "$SPACE_IDX" ] && ! [[ "$SPACE_IDX" =~ ^[0-9]+$ ]]; then
+    bar_log "ERROR: SPACE_IDX not numeric: '$SPACE_IDX' — clearing"
+    SPACE_IDX=""
+fi
+
 bar_log "start: style=$STYLE display_id=$DISPLAY_ID space=$SPACE_IDX label=$LABEL"
 
 # Shorten path for display (replace $HOME with ~)
 DISPLAY_PATH=$(echo "$WORK_PATH" | sed "s|$HOME|~|")
+
+# Validate DISPLAY_PATH is not contaminated with log text
+if [[ "$DISPLAY_PATH" == *"[bar]"* ]] || [[ "$DISPLAY_PATH" == *"workspace check"* ]]; then
+    bar_log "ERROR: DISPLAY_PATH contaminated: '$DISPLAY_PATH' — stripping to basename"
+    DISPLAY_PATH="~/${DISPLAY_PATH##*/}"
+fi
 
 # Style "none" — just hide the bar
 if [ "$STYLE" = "none" ]; then

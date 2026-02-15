@@ -50,17 +50,25 @@ yb_state_clear() {
 
 # Validate a workspace entry against live state.
 # $1=LABEL
-# Returns one of: intact, no_state, space_gone, primary_dead, secondary_dead,
-#   primary_drifted, secondary_drifted, order_wrong, bar_missing, bar_stale
-# Also exports: _SV_SPACE_IDX, _SV_PRIMARY_WID, _SV_SECONDARY_WID (for caller use)
+# Sets _SV_RESULT to one of: intact, no_state, space_gone, primary_dead,
+#   secondary_dead, primary_drifted, secondary_drifted, order_wrong, bar_missing, bar_stale
+# Also sets: _SV_SPACE_IDX, _SV_PRIMARY_WID, _SV_SECONDARY_WID (for caller use)
+# IMPORTANT: Call directly (not in a subshell) so variables propagate to caller.
 yb_state_validate() {
     local label="$1"
     local entry
     entry=$(yb_state_get "$label")
 
+    # Reset exports
+    _SV_RESULT=""
+    _SV_SPACE_IDX=""
+    _SV_PRIMARY_WID=""
+    _SV_SECONDARY_WID=""
+
     # 1. No entry → no_state
     if [ -z "$entry" ]; then
-        return 0  # caller checks via: result=$(yb_state_validate ...)
+        _SV_RESULT="no_state"
+        return 0
     fi
 
     local s_uuid s_idx s_pwid s_papp s_swid s_sapp s_mode
@@ -79,7 +87,7 @@ yb_state_validate() {
             '.[] | select(.uuid == $uuid) | .index' 2>/dev/null)
     fi
     if [ -z "$current_idx" ]; then
-        echo "space_gone"
+        _SV_RESULT="space_gone"
         return 0
     fi
 
@@ -92,7 +100,7 @@ yb_state_validate() {
         s_idx="$current_idx"
     fi
 
-    # Export for caller
+    # Set for caller
     _SV_SPACE_IDX="$s_idx"
 
     # 3. Validate primary WID
@@ -102,7 +110,7 @@ yb_state_validate() {
         if [ -z "$p_info" ] || [ "$p_info" = "null" ]; then
             _SV_PRIMARY_WID=""
             _SV_SECONDARY_WID="$s_swid"
-            echo "primary_dead"
+            _SV_RESULT="primary_dead"
             return 0
         fi
         local p_app p_space
@@ -111,7 +119,7 @@ yb_state_validate() {
         if [ "$p_space" != "$s_idx" ]; then
             _SV_PRIMARY_WID="$s_pwid"
             _SV_SECONDARY_WID="$s_swid"
-            echo "primary_drifted"
+            _SV_RESULT="primary_drifted"
             return 0
         fi
         _SV_PRIMARY_WID="$s_pwid"
@@ -126,14 +134,14 @@ yb_state_validate() {
         s_info=$(yabai -m query --windows --window "$s_swid" 2>/dev/null)
         if [ -z "$s_info" ] || [ "$s_info" = "null" ]; then
             _SV_SECONDARY_WID=""
-            echo "secondary_dead"
+            _SV_RESULT="secondary_dead"
             return 0
         fi
         local sec_space
         sec_space=$(echo "$s_info" | jq -r '.space // 0')
         if [ "$sec_space" != "$s_idx" ]; then
             _SV_SECONDARY_WID="$s_swid"
-            echo "secondary_drifted"
+            _SV_RESULT="secondary_drifted"
             return 0
         fi
         _SV_SECONDARY_WID="$s_swid"
@@ -145,7 +153,7 @@ yb_state_validate() {
         px=$(yabai -m query --windows --window "$_SV_PRIMARY_WID" 2>/dev/null | jq -r '.frame.x // 99999')
         sx=$(yabai -m query --windows --window "$_SV_SECONDARY_WID" 2>/dev/null | jq -r '.frame.x // 0')
         if [ "${px%.*}" -gt "${sx%.*}" ] 2>/dev/null; then
-            echo "order_wrong"
+            _SV_RESULT="order_wrong"
             return 0
         fi
     fi
@@ -154,7 +162,7 @@ yb_state_validate() {
     local bar_qr
     bar_qr=$(sketchybar --query "${label}_badge" 2>&1 | head -1)
     if [ -z "$bar_qr" ] || [[ "$bar_qr" == *"not found"* ]]; then
-        echo "bar_missing"
+        _SV_RESULT="bar_missing"
         return 0
     fi
     # Check bar bound to correct space
@@ -166,12 +174,12 @@ yb_state_validate() {
         bar_space="$_n"
     fi
     if [ -n "$bar_space" ] && [ "$bar_space" != "$s_idx" ]; then
-        echo "bar_stale"
+        _SV_RESULT="bar_stale"
         return 0
     fi
 
     # 7. All pass
-    echo "intact"
+    _SV_RESULT="intact"
     return 0
 }
 
