@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.6.2 — Global layout isolation + multi-display bar + cold start fix
+
+### Fixed
+- **Non-YB spaces auto-tiling** — global yabai layout changed from `bsp` to `float`; YB-managed spaces get BSP explicitly via `yb_space_bsp()`, non-YB spaces remain float
+- **Sketchybar covering non-YB windows** — changed `topmost=on` to `topmost=off`; on YB spaces, BSP padding pushes windows below the bar; on non-YB spaces, windows render over the empty bar
+- **Bar invisible on cross-display workspaces** — changed `display=$DISPLAY` to `display=all` in bar styles; items self-select via `associated_space`, rendering on whichever display their space is visible on
+- **`yb down` not killing skhd** — `skhd --stop-service` didn't terminate the process; added `pkill -x` fallback for all three services with post-shutdown verification
+- **Cold start stuck in Mission Control** — `ensure_services()` used blind `sleep 2` after starting yabai; replaced with IPC readiness loop that polls `yabai -m query --spaces` up to 10 times before proceeding
+
+### Changed
+- **`yabai/config.yabairc`** — removed `window_destroyed` signal that reset all spaces to BSP; removed `external_bar` (doubles up with `yb_space_bsp` padding)
+- **`sketchybar/bars/standard.sh`** — `topmost=off`, `display=all`
+- **`sketchybar/bars/minimal.sh`** — `topmost=off`, `display=all`
+- **`yb down`** — `pkill -x` fallback after each `--stop-service`; warns if any service survives shutdown
+- **`ensure_services()`** — yabai IPC readiness polling (replaces `sleep 2`); skhd liveness check
+
 ## v0.6.1 — Fix subshell variable loss + bar sanity checks
 
 ### Fixed
@@ -60,8 +76,7 @@
 
 ### Changed
 - **Bar launched before windows** — bar.sh runs at Step 1b (after space creation, before app opens) to establish namespace first
-- **Bar `topmost=on`** — ensures sketchybar renders above BSP-managed windows
-- **Bar display pinning** — removed `sticky=on` and `display=all`; bar pinned to specific display index (CGDirectDisplayID resolved to yabai index)
+- **Bar display** — bar display configuration moved to style scripts; resolved via yabai display index
 - **Standard bar** — background darkened (`0xff111111`), folder icon amber (`0xffe5c07b`)
 - **Claudedev layout** — default gap changed from 0 to 10
 - **Instance padding** — bar heights stripped from YAML padding values (now auto-added via `yb_bar_height()`): dev `52,12,12,12` → `12,12,12,12`, mm `52,0,0,0` → `0,0,0,0`, ai `34,0,0,0` → `0,0,0,0`

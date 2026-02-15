@@ -268,15 +268,28 @@ if [ "$1" == "down" ]; then
     done
     echo "  Bar items removed"
 
-    # Step 4: Stop services (spaces left as empties — reused on next launch)
+    # Step 4: Stop ALL services (spaces left as empties — reused on next launch)
     yabai --stop-service 2>/dev/null
+    pkill -x yabai 2>/dev/null
     echo "  yabai stopped"
     brew services stop sketchybar 2>/dev/null
+    pkill -x sketchybar 2>/dev/null
     echo "  sketchybar stopped"
     skhd --stop-service 2>/dev/null
+    pkill -x skhd 2>/dev/null
     echo "  skhd stopped"
 
-    echo "[yb] All services down. Launch any workspace to wake up."
+    # Verify everything is actually down
+    sleep 0.5
+    _STILL=""
+    pgrep -q yabai 2>/dev/null && _STILL="$_STILL yabai"
+    pgrep -q sketchybar 2>/dev/null && _STILL="$_STILL sketchybar"
+    pgrep -q skhd 2>/dev/null && _STILL="$_STILL skhd"
+    if [ -n "$_STILL" ]; then
+        echo "  WARN: still running:$_STILL"
+    fi
+
+    echo "[yb] All services down. Run 'yb <workspace>' to wake up."
     exit 0
 fi
 
@@ -285,23 +298,43 @@ fi
 # --- 0c. ENSURE SERVICES ARE RUNNING ---
 ensure_services() {
     local changed=0
+
+    # Start yabai (also starts skhd via yabairc)
     if ! pgrep -q yabai 2>/dev/null; then
         echo "[services] yabai not running — starting..."
         yabai --start-service 2>/dev/null
         changed=1
     fi
+
+    # Start sketchybar
     if ! pgrep -q sketchybar 2>/dev/null; then
         echo "[services] sketchybar not running — starting..."
         brew services start sketchybar 2>/dev/null
         changed=1
     fi
+
     if [ "$changed" -eq 1 ]; then
-        sleep 2
-        if ! pgrep -q yabai 2>/dev/null; then
-            echo "[services] WARN: yabai failed to start — check Accessibility permissions"
+        # Wait for yabai IPC to be ready (not just process alive)
+        local _ready=0
+        for _i in $(seq 1 10); do
+            if yabai -m query --spaces >/dev/null 2>&1; then
+                _ready=1
+                break
+            fi
+            sleep 0.5
+        done
+        if [ "$_ready" -eq 0 ]; then
+            echo "[services] WARN: yabai started but IPC not responding — check Accessibility permissions"
         fi
+
+        # Verify sketchybar
         if ! pgrep -q sketchybar 2>/dev/null; then
             echo "[services] WARN: sketchybar failed to start"
+        fi
+
+        # Verify skhd (started by yabai via yabairc)
+        if ! pgrep -q skhd 2>/dev/null; then
+            echo "[services] WARN: skhd not running (expected from yabairc)"
         fi
     fi
 }

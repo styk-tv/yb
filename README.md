@@ -502,8 +502,8 @@ Three bar styles, configured per-instance or per-layout via the `bar:` YAML fiel
 
 | Style | Height | Look |
 |---|---|---|
-| `standard` | 32px | Semi-transparent blur, rounded corners, [YB] badge + name + path + action icons |
-| `minimal` | 24px | Flat, workspace name + path only |
+| `standard` | 52px | Dark bar, [YB] badge + name + path + action icons |
+| `minimal` | 34px | Flat, workspace name + path only |
 | `none` | &mdash; | Bar hidden |
 
 ### Standard bar layout
@@ -525,7 +525,7 @@ Each workspace's bar items are prefixed with its label (e.g., `PUFF_badge`, `ONT
 
 ### Display targeting
 
-CGDirectDisplayID is converted to yabai display index via `yabai -m query --displays` for sketchybar display pinning.
+The bar is configured with `display=all` so it renders on every connected display. Items self-select via `associated_space` &mdash; they appear on whichever display their space is currently visible on. `topmost=off` ensures the bar doesn't cover windows on non-YB spaces.
 
 ### Config files
 
@@ -587,14 +587,14 @@ YB uses yabai BSP tiling for workspace layout:
 3. **Window management** &mdash; `yabai -m window --space` moves windows between spaces, `--swap` enforces window order
 4. **Space queries** &mdash; `yabai -m query --spaces` resolves visible space per display, validates window counts
 
-**Service management** &mdash; `yb.sh` ensures yabai and sketchybar are running before any workspace launch. If a service is down, it starts it automatically. skhd is started by yabai itself via `.yabairc` — it comes up alongside yabai and provides global hotkeys.
+**Service management** &mdash; `yb.sh` ensures yabai and sketchybar are running before any workspace launch. If a service is down, it starts it automatically and polls yabai's IPC socket until it accepts queries (not just process alive). skhd is started by yabai itself via `.yabairc` — it comes up alongside yabai and provides global hotkeys. `yb down` stops all three services with `pkill` fallback and post-shutdown verification.
 
 ### Config
 
 Global defaults in `yabai/config.yabairc` (symlinked to `~/.yabairc`):
 
 ```
-layout          bsp
+layout          float
 window_placement second_child
 mouse_modifier  alt
 mouse_action1   move
@@ -606,7 +606,7 @@ padding         10 (all sides)
 skhd --start-service
 ```
 
-These apply to desktops not managed by YB. YB workspaces override gap and padding per-instance or per-layout.
+Global layout is `float` so non-YB desktops don't auto-tile. YB-managed spaces get `bsp` explicitly via `yb_space_bsp()` with per-instance gap and padding.
 
 ### Shortcuts (skhd)
 

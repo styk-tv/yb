@@ -22,8 +22,8 @@ if [ "$ITEMS_ONLY" != "--items-only" ]; then
     sketchybar --bar \
         position=top \
         height=52 \
-        display=$DISPLAY \
-        topmost=on \
+        display=all \
+        topmost=off \
         blur_radius=0 \
         color=0xff020d06 \
         corner_radius=0 \
