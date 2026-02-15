@@ -18,7 +18,7 @@ if [ "$ITEMS_ONLY" != "--items-only" ]; then
         display=$DISPLAY \
         topmost=on \
         blur_radius=0 \
-        color=0x66000000 \
+        color=0xcc020d06 \
         corner_radius=0 \
         margin=0 \
         padding_left=8 \
@@ -26,7 +26,7 @@ if [ "$ITEMS_ONLY" != "--items-only" ]; then
         hidden=off
 
     sketchybar --default \
-        label.color=0xffffffff
+        label.color=0xffa8baac
 fi
 
 # --- Left: workspace name ---
@@ -35,7 +35,7 @@ sketchybar --set ${P}_label \
     icon="" \
     label="$LABEL" \
     label.font="Hack Nerd Font:Bold:12.0" \
-    label.color=0xffffffff \
+    label.color=0xffa8baac \
     script="" \
     updates=off
 
@@ -45,7 +45,7 @@ sketchybar --set ${P}_path \
     icon="" \
     label="$WPATH" \
     label.font="Hack Nerd Font:Regular:10.0" \
-    label.color=0x88ffffff \
+    label.color=0x88a2b1a9 \
     label.padding_left=6 \
     script="" \
     updates=off

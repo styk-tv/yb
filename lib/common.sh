@@ -136,6 +136,106 @@ yb_rebind_stale_items() {
     done
 }
 
+# --- Space focus (keyboard navigation — works without scripting addition) ---
+
+# Focus a display by moving mouse to center and clicking.
+# $1=display_id (CGDirectDisplayID)
+yb_focus_display() {
+    local did="$1"
+    osascript -l JavaScript \
+        -e "var targetDID = $did;" \
+        -e '
+ObjC.import("AppKit");
+ObjC.import("CoreGraphics");
+var screens = $.NSScreen.screens;
+var primaryH = 0;
+for (var i = 0; i < screens.count; i++) {
+    var f = screens.objectAtIndex(i).frame;
+    if (f.origin.x === 0 && f.origin.y === 0) { primaryH = f.size.height; break; }
+}
+for (var i = 0; i < screens.count; i++) {
+    var s = screens.objectAtIndex(i);
+    var did = ObjC.unwrap(s.deviceDescription.objectForKey("NSScreenNumber"));
+    if (did == targetDID) {
+        var f = s.frame;
+        var cx = f.origin.x + f.size.width / 2;
+        var cy = primaryH - f.origin.y - f.size.height + f.size.height / 2;
+        var point = $.CGPointMake(cx, cy);
+        var moveEvt = $.CGEventCreateMouseEvent($(), $.kCGEventMouseMoved, point, $.kCGMouseButtonLeft);
+        $.CGEventPost($.kCGHIDEventTap, moveEvt);
+        delay(0.1);
+        var down = $.CGEventCreateMouseEvent($(), $.kCGEventLeftMouseDown, point, $.kCGMouseButtonLeft);
+        var up   = $.CGEventCreateMouseEvent($(), $.kCGEventLeftMouseUp, point, $.kCGMouseButtonLeft);
+        $.CGEventPost($.kCGHIDEventTap, down);
+        delay(0.05);
+        $.CGEventPost($.kCGHIDEventTap, up);
+        break;
+    }
+}' 2>/dev/null
+}
+
+# Focus a specific space on a display using keyboard navigation (ctrl+arrows).
+# Works without yabai scripting addition.
+# $1=target_space_index $2=display_id
+yb_focus_space() {
+    local target="$1" display_id="$2"
+
+    # Check if already on target
+    local visible
+    visible=$(yb_visible_space "$display_id")
+    [ "$visible" = "$target" ] && return 0
+
+    # Focus the display first (mouse click)
+    yb_focus_display "$display_id"
+    sleep 0.2
+
+    # Re-check after display focus
+    visible=$(yb_visible_space "$display_id")
+    [ "$visible" = "$target" ] && return 0
+
+    # Get display's yabai index
+    local disp_idx
+    disp_idx=$(yabai -m query --displays | jq -r --argjson did "$display_id" \
+        '.[] | select(.id == $did) | .index')
+    [ -z "$disp_idx" ] && { yb_log "focus-space: display $display_id not found"; return 1; }
+
+    # Get ordered space indices on this display
+    local spaces_list
+    spaces_list=$(yabai -m query --spaces | jq -r --argjson di "$disp_idx" \
+        '[.[] | select(.display == $di)] | sort_by(.index) | .[].index')
+
+    # Find positions of visible and target
+    local vis_pos=-1 tgt_pos=-1 pos=0
+    for sp in $spaces_list; do
+        [ "$sp" = "$visible" ] && vis_pos=$pos
+        [ "$sp" = "$target" ] && tgt_pos=$pos
+        pos=$((pos + 1))
+    done
+
+    if [ "$vis_pos" -lt 0 ] || [ "$tgt_pos" -lt 0 ]; then
+        yb_log "focus-space: WARN vis=$visible(pos=$vis_pos) tgt=$target(pos=$tgt_pos) not found"
+        return 1
+    fi
+
+    local delta=$((tgt_pos - vis_pos))
+    yb_log "focus-space: $visible → $target (delta=$delta)"
+
+    if [ "$delta" -gt 0 ]; then
+        for i in $(seq 1 $delta); do
+            osascript -e 'tell application "System Events" to key code 124 using control down'
+            sleep 0.4
+        done
+    elif [ "$delta" -lt 0 ]; then
+        local abs=$(( -delta ))
+        for i in $(seq 1 $abs); do
+            osascript -e 'tell application "System Events" to key code 123 using control down'
+            sleep 0.4
+        done
+    fi
+
+    return 0
+}
+
 # --- Display geometry ---
 
 # Returns X:Y:W:H in CG coordinates (top-left origin) for a CGDirectDisplayID.

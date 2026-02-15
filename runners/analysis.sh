@@ -337,6 +337,45 @@ echo "└───────────────────────�
 echo ""
 
 # ──────────────────────────────────────────────────────────────
+# 5b. MERGED WORKSPACES — multiple labels on same space
+# ──────────────────────────────────────────────────────────────
+echo "┌─ Merged Workspaces ────────────────────────────────────────────┐"
+echo "│"
+
+MERGED_FOUND=0
+# Get final space for each label
+for lbl in $LABELS; do
+    [ -z "$lbl" ] && continue
+    LAST_FILE=""
+    for f in "${FILES[@]}"; do
+        _l=$(jq -r '.label // ""' "$f")
+        [ "$_l" = "$lbl" ] && LAST_FILE="$f"
+    done
+    [ -z "$LAST_FILE" ] && continue
+    _space=$(jq -r '.space_idx // ""' "$LAST_FILE")
+    [ -z "$_space" ] || [ "$_space" = "null" ] && continue
+    echo "$_space|$lbl"
+done | sort -t'|' -k1 -n > "${ANOMALY_FILE}.spaces"
+
+# Find spaces with multiple labels
+_DUP_SPACES=$(cut -d'|' -f1 "${ANOMALY_FILE}.spaces" 2>/dev/null | sort | uniq -d)
+if [ -n "$_DUP_SPACES" ]; then
+    for _sp in $_DUP_SPACES; do
+        _labels=$(grep "^${_sp}|" "${ANOMALY_FILE}.spaces" | cut -d'|' -f2 | sort | tr '\n' '+' | sed 's/+$//')
+        echo "│  🔴 CRITICAL: Multiple workspaces on space $_sp → $_labels"
+        MERGED_FOUND=1
+    done
+fi
+
+if [ "$MERGED_FOUND" -eq 0 ]; then
+    echo "│  ✓ All workspaces on separate spaces"
+fi
+rm -f "${ANOMALY_FILE}.spaces"
+echo "│"
+echo "└────────────────────────────────────────────────────────────────┘"
+echo ""
+
+# ──────────────────────────────────────────────────────────────
 # 6. WINDOW ORDER — check primary (left) vs secondary (right)
 # ──────────────────────────────────────────────────────────────
 echo "┌─ Window Order ──────────────────────────────────────────────────┐"
@@ -447,7 +486,65 @@ echo ""
 ANOMALY_COUNT=$(wc -l < "$ANOMALY_FILE" 2>/dev/null | tr -d ' ')
 
 # ──────────────────────────────────────────────────────────────
-# 8. SUMMARY
+# 8. SKETCHYBAR CONFIG — live bar + item state
+# ──────────────────────────────────────────────────────────────
+echo "┌─ Sketchybar Config (live) ──────────────────────────────────────┐"
+echo "│"
+
+if pgrep -q sketchybar 2>/dev/null; then
+    # Bar-level config
+    _BAR_JSON=$(sketchybar --query bar 2>/dev/null)
+    if [ -n "$_BAR_JSON" ]; then
+        _bar_pos=$(echo "$_BAR_JSON" | jq -r '.position // "?"')
+        _bar_h=$(echo "$_BAR_JSON" | jq -r '.height // "?"')
+        _bar_color=$(echo "$_BAR_JSON" | jq -r '.color // "?"')
+        _bar_display=$(echo "$_BAR_JSON" | jq -r '.display // "?"')
+        _bar_drawing=$(echo "$_BAR_JSON" | jq -r '.drawing // "?"')
+        printf "│  bar: position=%-8s height=%-4s display=%-6s drawing=%-5s color=%s\n" \
+            "$_bar_pos" "$_bar_h" "$_bar_display" "$_bar_drawing" "$_bar_color"
+    fi
+    echo "│"
+
+    # Space visibility (context for item bindings)
+    _VIS_SPACES=$(yabai -m query --spaces 2>/dev/null | jq -r '.[] | select(.["is-visible"] == true) | "s\(.index)=disp\(.display)"' | tr '\n' ' ')
+    echo "│  visible spaces: $_VIS_SPACES"
+    echo "│"
+
+    # Items per label
+    for lbl in $LABELS; do
+        [ -z "$lbl" ] && continue
+        echo "│  $lbl items:"
+        for _suffix in badge label path code term folder close; do
+            _item="${lbl}_${_suffix}"
+            _item_json=$(sketchybar --query "$_item" 2>/dev/null)
+            if [ -n "$_item_json" ] && ! echo "$_item_json" | grep -q "not found"; then
+                _drawing=$(echo "$_item_json" | jq -r '.geometry.drawing // "?"')
+                _assoc_space=$(echo "$_item_json" | jq -r '.geometry.associated_space_mask // 0')
+                _assoc_display=$(echo "$_item_json" | jq -r '.geometry.associated_display // "?"')
+                # Convert bitmask to space number
+                _space_num="none"
+                if [ "$_assoc_space" -gt 0 ] 2>/dev/null; then
+                    _b=$_assoc_space _n=0
+                    while [ "$_b" -gt 1 ]; do _b=$((_b / 2)); _n=$((_n + 1)); done
+                    _space_num="$_n"
+                fi
+                printf "│    %-16s  drawing=%-5s  space=%-4s  display=%s\n" \
+                    "$_item" "$_drawing" "$_space_num" "$_assoc_display"
+            else
+                printf "│    %-16s  MISSING\n" "$_item"
+            fi
+        done
+        echo "│"
+    done
+else
+    echo "│  sketchybar not running"
+fi
+
+echo "└────────────────────────────────────────────────────────────────┘"
+echo ""
+
+# ──────────────────────────────────────────────────────────────
+# 9. SUMMARY
 # ──────────────────────────────────────────────────────────────
 echo "┌─ Summary ──────────────────────────────────────────────────────┐"
 echo "│"

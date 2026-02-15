@@ -16,5 +16,8 @@ yabai -m config right_padding 10
 yabai -m config window_shadow on
 yabai -m config window_border on
 
+# Start skhd alongside yabai (global hotkeys)
+skhd --start-service 2>/dev/null
+
 # Signals
 yabai -m signal --add event=window_destroyed action="yabai -m message space --layout bsp"

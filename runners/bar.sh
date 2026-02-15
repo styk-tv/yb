@@ -87,23 +87,23 @@ fi
 # --- Namespace prefix (from label) ---
 PREFIX="$LABEL"
 
-# --- Determine if bar already has items (another workspace configured it) ---
-# If the bar is already visible, subsequent workspaces only add their items
-# (skip global --bar config to avoid flashing and display resets)
+# --- Determine if another workspace already configured the bar ---
+# Check for existing YB namespace items (not just hidden state — default bar is unhidden but unconfigured)
 ITEMS_ONLY=""
-_BAR_STATE=$(sketchybar --query bar 2>/dev/null | python3 -c "
+_HAS_YB_ITEMS=$(sketchybar --query bar 2>/dev/null | python3 -c "
 import json, sys
 try:
     d = json.load(sys.stdin)
-    h = d.get('hidden', 'on')
-    print('visible' if h == 'off' else 'hidden')
-except: print('unknown')" 2>/dev/null)
+    items = d.get('items', [])
+    yb = [i for i in items if '_badge' in i]
+    print('yes' if yb else 'no')
+except: print('no')" 2>/dev/null)
 
-if [ "$_BAR_STATE" = "visible" ]; then
+if [ "$_HAS_YB_ITEMS" = "yes" ]; then
     ITEMS_ONLY="--items-only"
     bar_log "bar already visible — items-only mode (no global reconfig)"
 else
-    bar_log "bar hidden/new — full config mode"
+    bar_log "no YB items — full config mode"
 fi
 
 # --- Create items via style script ---

@@ -99,7 +99,7 @@ YB reads the instance, then runs each piece in sequence:
 === Ready: MM ===
 ```
 
-App handlers (`lib/app/code.sh`, `lib/app/iterm.sh`, etc.) provide open/find/close/focus/locate per app. The orchestrator contains zero app-specific code.
+App handlers (`lib/app/`) provide open/find/close/focus per app. Each handler is split into shared + engine modules &mdash; the orchestrator sources the shared file, then the engine override (`*.yabai.sh` or `*.jxa.sh`). Zero app-specific code in the orchestrator, zero if/else in any handler.
 
 ---
 
@@ -110,7 +110,7 @@ App handlers (`lib/app/code.sh`, `lib/app/iterm.sh`, etc.) provide open/find/clo
 Installed automatically by `setup.sh`:
 
 ```bash
-brew install yq jq
+brew install yq jq choose-gui
 brew install koekeishiya/formulae/yabai
 brew install koekeishiya/formulae/skhd
 brew tap felixkratz/formulae
@@ -121,8 +121,9 @@ brew install sketchybar
 |---|---|---|
 | `yq` | &mdash; | YAML parser for instance/layout configs |
 | `jq` | &mdash; | JSON parser for display/space queries |
+| `choose-gui` | &mdash; | Fuzzy picker for workspace quick-launch (`Cmd+.`) |
 | `yabai` | `koekeishiya/formulae` | Window manager &mdash; window tracking + positioning (SIP-enabled), BSP tiling (SIP-disabled) |
-| `skhd` | `koekeishiya/formulae` | Hotkey daemon (optional, for keybindings) |
+| `skhd` | `koekeishiya/formulae` | Hotkey daemon &mdash; global shortcuts (e.g., `Cmd+.` workspace picker) |
 | `sketchybar` | `felixkratz/formulae` | Status bar with workspace labels and icons |
 
 ### Font
@@ -159,6 +160,7 @@ cd ~/.config/styk-tv/yb
 |---|---|
 | `yabai/config.yabairc` | `~/.yabairc` |
 | `sketchybar/sketchybarrc` | `~/.config/sketchybar/sketchybarrc` |
+| `skhd/skhdrc` | `~/.config/skhd/skhdrc` |
 
 Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
 
@@ -373,20 +375,30 @@ When an instance uses `layout:`, bar height is auto-added to top padding (querie
 | `yb_display_frame $did` | Display geometry as X:Y:W:H (yabai or JXA) |
 | `yb_position $wid $x $y $w $h` | Position window (yabai or JXA; used by splitview fallback) |
 
-### App handlers (`lib/app/*.sh`)
+### App handlers (`lib/app/`)
 
-Each app module provides a standard interface:
+Each app has three files: shared (engine-neutral), yabai engine, and JXA engine. The orchestrator sources the shared file first, then the engine override. Last-sourced function wins &mdash; no if/else branching.
 
-| Function | Purpose |
-|---|---|
-| `app_<name>_open $path [$cmd]` | Launch the app with workspace path |
-| `app_<name>_find $path [$space]` | Find window ID (optionally filtered by space) |
-| `app_<name>_close $path` | Close the app's workspace window |
-| `app_<name>_is_open $path` | Check if workspace is open (exit 0/1) |
-| `app_<name>_focus $path` | Focus/activate an existing window |
-| `app_<name>_locate $path` | Find window and return which display it's on |
+```
+lib/app/code.sh            # shared: open, is_open, focus, post_setup, snapshot, find_new
+lib/app/code.yabai.sh      # yabai engine: find, close
+lib/app/code.jxa.sh        # jxa engine: find, close, locate, tile_left
+```
+
+**Standard interface** (same function signatures across all engines):
+
+| Function | Defined in | Purpose |
+|---|---|---|
+| `app_<name>_open $path [$cmd]` | shared | Launch the app with workspace path |
+| `app_<name>_find $path [$space]` | engine | Find window ID (optionally filtered by space) |
+| `app_<name>_close $path` | engine | Close the app's workspace window |
+| `app_<name>_is_open $path` | shared | Check if workspace is open (delegates to `find`) |
+| `app_<name>_focus $path` | shared | Focus/activate an existing window |
+| `app_<name>_locate $path` | jxa only | Find window and return which display (splitview mode) |
 
 Available handlers: `code` (VS Code), `iterm` (iTerm2), `terminal` (Terminal.app).
+
+**Engine selection**: `yb_yabai_ok` determines which engine files are sourced. When yabai is running, the yabai path is pure `yabai -m query` / `yabai -m window --close` &mdash; zero osascript for window management. JXA is only loaded for splitview mode.
 
 `lib/display_frame.jxa` is a standalone JXA script for display geometry when yabai is unavailable.
 
@@ -424,6 +436,17 @@ Configures SketchyBar for a workspace on a specific display. Items are namespace
 - **Namespace prefix** &mdash; label (e.g., MM) used as item prefix: `MM_badge`, `MM_label`, `MM_path`, `MM_close`, etc.
 - **Space binding** &mdash; all namespaced items bound to specific space via `associated_space`
 - Delegates to style scripts in `sketchybar/bars/`
+
+### `choose`
+
+Fuzzy workspace picker. Reads all instances, presents a `choose-gui` overlay, launches the selected workspace.
+
+```bash
+./runners/choose.sh              # pick and launch
+./runners/choose.sh --display 3  # override display
+```
+
+Bound to `Cmd+.` via skhd (`skhd/skhdrc`).
 
 ### `tile` / `solo` (legacy)
 
@@ -489,9 +512,9 @@ When yabai is running, display frames come from `yabai -m query --displays` (mat
 
 When `yb <instance>` is called for an already-open workspace:
 
-1. **Detection** &mdash; `code --status` checks for exact `Folder (<name>):` match
-2. **Window lookup** &mdash; JXA locate finds the window and its display; if hidden space, focuses app first and retries
-3. **Display check** &mdash; determines which display the window is on
+1. **Detection** &mdash; `app_code_find` (yabai window query) checks for matching window
+2. **Window lookup** &mdash; yabai query resolves window ID and display index directly
+3. **Display check** &mdash; compares found display to target display
 4. **Shared-space check** &mdash; counts non-sticky windows on the space; if more than expected (another workspace's windows), closes stale and rebuilds
 
 **Same display** (refresh):
@@ -515,7 +538,7 @@ YB uses yabai BSP tiling for workspace layout:
 3. **Window management** &mdash; `yabai -m window --space` moves windows between spaces, `--swap` enforces window order
 4. **Space queries** &mdash; `yabai -m query --spaces` resolves visible space per display, validates window counts
 
-**Service management** &mdash; `yb.sh` ensures yabai and sketchybar are running before any workspace launch. If a service is down, it starts it automatically.
+**Service management** &mdash; `yb.sh` ensures yabai and sketchybar are running before any workspace launch. If a service is down, it starts it automatically. skhd is started by yabai itself via `.yabairc` — it comes up alongside yabai and provides global hotkeys.
 
 ### Config
 
@@ -529,9 +552,20 @@ mouse_action1   move
 mouse_action2   resize
 window_gap      10
 padding         10 (all sides)
+
+# skhd startup (global hotkeys alongside yabai)
+skhd --start-service
 ```
 
 These apply to desktops not managed by YB. YB workspaces override gap and padding per-instance or per-layout.
+
+### Shortcuts (skhd)
+
+Global hotkeys registered in `skhd/skhdrc` (symlinked to `~/.config/skhd/skhdrc`):
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd + .` | Workspace picker &mdash; fuzzy-select from instances, launches via `runners/choose.sh` |
 
 ---
 
@@ -546,15 +580,22 @@ yb/
 ├── lib/                          # Shared library + app handlers
 │   ├── common.sh                 # BSP config, space queries, display, positioning
 │   ├── display_frame.jxa         # JXA display geometry fallback
-│   └── app/                      # Per-app open/find/close/focus/locate
-│       ├── code.sh               # Visual Studio Code
-│       ├── iterm.sh              # iTerm2
-│       └── terminal.sh           # Terminal.app
+│   └── app/                      # Per-app handlers (shared + engine modules)
+│       ├── code.sh               # VS Code shared (open, focus, is_open, post_setup)
+│       ├── code.yabai.sh         # VS Code yabai engine (find, close)
+│       ├── code.jxa.sh           # VS Code JXA engine (find, close, locate, tile_left)
+│       ├── iterm.sh              # iTerm2 shared (open, snapshot)
+│       ├── iterm.yabai.sh        # iTerm2 yabai engine (find, close)
+│       ├── iterm.jxa.sh          # iTerm2 JXA engine (find, close)
+│       ├── terminal.sh           # Terminal.app shared (open, snapshot)
+│       ├── terminal.yabai.sh     # Terminal.app yabai engine (find, close)
+│       └── terminal.jxa.sh       # Terminal.app JXA engine (find, close)
 ├── instances/                    # Workspace definitions
 │   ├── ai.yaml
 │   ├── claude.yaml
 │   ├── dev.yaml
 │   ├── mm.yaml
+│   ├── ontosys.yaml
 │   ├── puff.yaml
 │   └── styk.yaml
 ├── layouts/                      # Reusable workspace templates
@@ -565,8 +606,12 @@ yb/
 ├── runners/                      # Infrastructure scripts
 │   ├── space.sh                  # Virtual desktop management
 │   ├── bar.sh                    # SketchyBar orchestrator (namespaced)
+│   ├── choose.sh                 # Fuzzy workspace picker (Cmd+.)
+│   ├── analysis.sh               # Debug analysis (--debug mode)
 │   ├── tile.sh                   # Legacy: manual tile positioning
 │   └── solo.sh                   # Legacy: manual solo positioning
+├── skhd/
+│   └── skhdrc                    # Global hotkeys (symlinked to ~/.config/skhd/)
 ├── sketchybar/
 │   ├── sketchybarrc              # Global config (empty, all via bar.sh)
 │   ├── bars/
@@ -586,14 +631,17 @@ yb/
 
 ```
 Instance YAML          Layout YAML           App Handlers
-┌──────────┐          ┌──────────┐         ┌──────────────┐
-│ path     │─layout──▶│ terminal │         │ lib/app/     │
-│ display  │          │ mode     │         │  code.sh     │
-│ (overrides)│        │ cmd      │         │  iterm.sh    │
-└──────────┘          │ bar      │         │  terminal.sh │
-                      │ zoom     │         └──────┬───────┘
-                      │ layout:  │                │
-                      └──────────┘         lib/common.sh
+┌──────────┐          ┌──────────┐         ┌──────────────────┐
+│ path     │─layout──▶│ terminal │         │ lib/app/         │
+│ display  │          │ mode     │         │  code.sh         │ shared
+│ (overrides)│        │ cmd      │         │  code.yabai.sh   │ engine
+└──────────┘          │ bar      │         │  code.jxa.sh     │ engine
+                      │ zoom     │         │  iterm.sh        │
+                      │ layout:  │         │  iterm.yabai.sh  │
+                      └──────────┘         │  ...             │
+                                           └──────┬───────────┘
+                                                  │
+                                           lib/common.sh
                                            ┌──────┴───────┐
                                            │ yb_space_bsp │
                                            │ yb_bar_height│

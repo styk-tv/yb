@@ -1,0 +1,5 @@
+# skhd configuration
+# Reload: skhd --reload
+
+# Cmd+. → YB workspace picker
+cmd - 0x2F : /Users/neoxr/.config/styk-tv/yb/runners/choose.sh

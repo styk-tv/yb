@@ -5,9 +5,14 @@
 
 _CLOSE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$_CLOSE_ROOT/lib/common.sh"
-source "$_CLOSE_ROOT/lib/app/code.sh"
-source "$_CLOSE_ROOT/lib/app/iterm.sh"
-source "$_CLOSE_ROOT/lib/app/terminal.sh"
+
+# Determine engine and load app handlers (shared + engine override)
+_ENGINE="jxa"
+yb_yabai_ok && _ENGINE="yabai"
+for _app in code iterm terminal; do
+    source "$_CLOSE_ROOT/lib/app/${_app}.sh"
+    [ -f "$_CLOSE_ROOT/lib/app/${_app}.${_ENGINE}.sh" ] && source "$_CLOSE_ROOT/lib/app/${_app}.${_ENGINE}.sh"
+done
 
 # Extract prefix from item name: PUFF_close → PUFF
 PREFIX="${NAME%_close}"
@@ -15,7 +20,7 @@ PREFIX="${NAME%_close}"
 case "$SENDER" in
     mouse.entered)
         sketchybar --set "$NAME" \
-            icon.color=0xff1e1e1e \
+            icon.color=0xff020d06 \
             background.drawing=on \
             background.color=0xddff6666 \
             background.corner_radius=8 \
@@ -23,7 +28,7 @@ case "$SENDER" in
         ;;
     mouse.exited)
         sketchybar --set "$NAME" \
-            icon.color=0x99ffffff \
+            icon.color=0xbba0ada3 \
             background.drawing=off
         ;;
     mouse.clicked)
@@ -63,10 +68,14 @@ except: pass" 2>/dev/null)
             _SPACE_IDX="$_n"
         fi
 
-        # Close all known app types (no-op if window doesn't exist)
-        app_code_close "$FULL_PATH"
-        app_iterm_close "$FULL_PATH"
-        app_terminal_close "$FULL_PATH"
+        # Close ALL non-sticky windows on this managed space (by space ownership, not text search)
+        if [ -n "$_SPACE_IDX" ] && yabai -m query --windows >/dev/null 2>&1; then
+            _WIDS=$(yabai -m query --windows | jq -r --argjson sp "$_SPACE_IDX" \
+                '.[] | select(.space == $sp) | select(.["is-sticky"] == false) | .id')
+            for _wid in $_WIDS; do
+                yabai -m window "$_wid" --close 2>/dev/null
+            done
+        fi
 
         # Stop spinner
         kill $_SPINNER_PID 2>/dev/null
@@ -77,12 +86,6 @@ except: pass" 2>/dev/null)
             sketchybar --remove "${PREFIX}_${suffix}" 2>/dev/null
         done
 
-        # Destroy the macOS Space (prevents orphan empty desktops)
-        if [ -n "$_SPACE_IDX" ] && [ "$_SPACE_IDX" -gt 0 ] 2>/dev/null; then
-            sleep 0.5
-            yabai -m space "$_SPACE_IDX" --destroy 2>/dev/null
-            # Rebind other workspaces' bar items (space destruction shifts indices)
-            yb_rebind_stale_items "$PREFIX"
-        fi
+        # Space left as empty — will be reused on next launch
         ;;
 esac

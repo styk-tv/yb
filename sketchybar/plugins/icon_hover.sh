@@ -5,15 +5,15 @@
 case "$SENDER" in
     mouse.entered)
         sketchybar --set "$NAME" \
-            icon.color=0xff1e1e1e \
+            icon.color=0xff020d06 \
             background.drawing=on \
-            background.color=0xdd98c379 \
+            background.color=0xff2b9272 \
             background.corner_radius=8 \
             background.height=36
         ;;
     mouse.exited)
         sketchybar --set "$NAME" \
-            icon.color=0x99ffffff \
+            icon.color=0xcc2b9272 \
             background.drawing=off
         ;;
 esac
