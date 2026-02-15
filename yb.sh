@@ -268,28 +268,25 @@ if [ "$1" == "down" ]; then
     done
     echo "  Bar items removed"
 
-    # Step 4: Stop ALL services (spaces left as empties — reused on next launch)
+    # Step 4: Stop yabai + sketchybar (skhd stays alive for choose hotkey)
     yabai --stop-service 2>/dev/null
     pkill -x yabai 2>/dev/null
     echo "  yabai stopped"
     brew services stop sketchybar 2>/dev/null
     pkill -x sketchybar 2>/dev/null
     echo "  sketchybar stopped"
-    skhd --stop-service 2>/dev/null
-    pkill -x skhd 2>/dev/null
-    echo "  skhd stopped"
+    echo "  skhd kept alive (choose hotkey)"
 
-    # Verify everything is actually down
+    # Verify yabai + sketchybar are down
     sleep 0.5
     _STILL=""
     pgrep -q yabai 2>/dev/null && _STILL="$_STILL yabai"
     pgrep -q sketchybar 2>/dev/null && _STILL="$_STILL sketchybar"
-    pgrep -q skhd 2>/dev/null && _STILL="$_STILL skhd"
     if [ -n "$_STILL" ]; then
         echo "  WARN: still running:$_STILL"
     fi
 
-    echo "[yb] All services down. Run 'yb <workspace>' to wake up."
+    echo "[yb] Services down. skhd+choose active. Run 'yb <workspace>' or press Cmd+. to wake up."
     exit 0
 fi
 

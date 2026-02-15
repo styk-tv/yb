@@ -89,6 +89,14 @@ except: pass" 2>/dev/null)
         # Remove state manifest entry
         yb_state_remove "$PREFIX"
 
-        # Space left as empty — will be reused on next launch
+        # Release space from YB control — revert to float with global defaults
+        if [ -n "$_SPACE_IDX" ]; then
+            yabai -m config --space "$_SPACE_IDX" layout float
+            yabai -m config --space "$_SPACE_IDX" top_padding 10
+            yabai -m config --space "$_SPACE_IDX" bottom_padding 10
+            yabai -m config --space "$_SPACE_IDX" left_padding 10
+            yabai -m config --space "$_SPACE_IDX" right_padding 10
+            yabai -m config --space "$_SPACE_IDX" window_gap 10
+        fi
         ;;
 esac

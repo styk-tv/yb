@@ -587,7 +587,7 @@ YB uses yabai BSP tiling for workspace layout:
 3. **Window management** &mdash; `yabai -m window --space` moves windows between spaces, `--swap` enforces window order
 4. **Space queries** &mdash; `yabai -m query --spaces` resolves visible space per display, validates window counts
 
-**Service management** &mdash; `yb.sh` ensures yabai and sketchybar are running before any workspace launch. If a service is down, it starts it automatically and polls yabai's IPC socket until it accepts queries (not just process alive). skhd is started by yabai itself via `.yabairc` — it comes up alongside yabai and provides global hotkeys. `yb down` stops all three services with `pkill` fallback and post-shutdown verification.
+**Service management** &mdash; `yb.sh` ensures yabai and sketchybar are running before any workspace launch. If a service is down, it starts it automatically and polls yabai's IPC socket until it accepts queries (not just process alive). skhd is started by yabai itself via `.yabairc` — it comes up alongside yabai and provides global hotkeys. `yb down` stops yabai and sketchybar but keeps skhd alive so the choose hotkey (`Cmd+.`) remains functional for cold-starting workspaces.
 
 ### Config
 

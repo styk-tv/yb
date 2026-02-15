@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.6.3 — Dynamic bar display + space release on close + choose survives shutdown
+
+### Fixed
+- **Empty bar strip on non-YB displays** — `display=all` left a dark 52px bar background on displays with no active workspaces; added `yb_bar_update_display()` that dynamically narrows bar `display` to only the yabai displays that have active workspaces (1 display → `display=N`, 2+ → `display=all`, 0 → `drawing=off`)
+- **Closed workspace space retains BSP** — after X-close, the space kept `layout=bsp` and `top_padding=52`; now `action_close.sh` resets the space to `layout=float` with global defaults (`padding=10`, `gap=10`)
+- **Choose hotkey lost after `yb down`** — skhd was stopped along with yabai and sketchybar, killing the `Cmd+.` choose picker; `yb down` now keeps skhd alive so the user can cold-start a workspace via choose at any time
+
+### Changed
+- **`lib/state.sh`** — added `yb_bar_update_display()`, auto-called by `yb_state_set`, `yb_state_remove`, `yb_state_clear`
+- **`sketchybar/plugins/action_close.sh`** — resets space to float with global defaults after removing bar items and state
+- **`yb down`** — no longer stops skhd; shutdown message updated to indicate choose remains active
+
 ## v0.6.2 — Global layout isolation + multi-display bar + cold start fix
 
 ### Fixed

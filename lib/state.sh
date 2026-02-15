@@ -6,6 +6,51 @@
 YB_STATE_DIR="$YB_ROOT/state"
 YB_STATE_FILE="$YB_STATE_DIR/manifest.json"
 
+# Update sketchybar bar display to cover only displays with active workspaces.
+# 0 workspaces → hidden, 1 display → display=N, 2+ displays → display=all.
+# Called automatically by yb_state_set, yb_state_remove, yb_state_clear.
+yb_bar_update_display() {
+    pgrep -q sketchybar 2>/dev/null || return 0
+    local _display
+    _display=$(python3 -c "
+import json, subprocess, os
+sf = '$YB_STATE_FILE'
+result = 'all'
+if not os.path.exists(sf):
+    result = 'hidden'
+else:
+    try:
+        with open(sf) as f:
+            m = json.load(f)
+        ws = m.get('workspaces', {})
+        if not ws:
+            result = 'hidden'
+        else:
+            sraw = subprocess.check_output(['yabai', '-m', 'query', '--spaces'], stderr=subprocess.DEVNULL)
+            spaces = json.loads(sraw)
+            s2d = {s['index']: s['display'] for s in spaces}
+            displays = set()
+            for w in ws.values():
+                si = w.get('space_idx')
+                if si in s2d:
+                    displays.add(s2d[si])
+            if not displays:
+                result = 'hidden'
+            elif len(displays) == 1:
+                result = str(list(displays)[0])
+            else:
+                result = 'all'
+    except Exception:
+        result = 'all'
+print(result)
+" 2>/dev/null)
+    if [ "$_display" = "hidden" ]; then
+        sketchybar --bar drawing=off 2>/dev/null
+    else
+        sketchybar --bar drawing=on display="$_display" 2>/dev/null
+    fi
+}
+
 # Read full manifest. Returns {} if missing.
 yb_state_read() {
     if [ -f "$YB_STATE_FILE" ]; then
@@ -33,6 +78,7 @@ yb_state_set() {
     local tmp="$YB_STATE_FILE.tmp.$$"
     echo "$current" | jq --arg l "$label" --argjson v "$json" \
         '.version = 1 | .workspaces[$l] = $v' > "$tmp" && mv "$tmp" "$YB_STATE_FILE"
+    yb_bar_update_display
 }
 
 # Remove one workspace entry. $1=LABEL
@@ -41,11 +87,13 @@ yb_state_remove() {
     [ -f "$YB_STATE_FILE" ] || return 0
     local tmp="$YB_STATE_FILE.tmp.$$"
     jq --arg l "$label" 'del(.workspaces[$l])' "$YB_STATE_FILE" > "$tmp" && mv "$tmp" "$YB_STATE_FILE"
+    yb_bar_update_display
 }
 
 # Delete manifest (used by yb down).
 yb_state_clear() {
     rm -f "$YB_STATE_FILE"
+    yb_bar_update_display
 }
 
 # Validate a workspace entry against live state.
