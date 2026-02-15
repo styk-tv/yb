@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.6.1 — Fix subshell variable loss + bar sanity checks
+
+### Fixed
+- **State validate subshell bug** — `yb_state_validate` ran inside `$(...)` command substitution, causing `_SV_SPACE_IDX`, `_SV_PRIMARY_WID`, `_SV_SECONDARY_WID` to be lost when the subshell exited; intact path focused empty space instead of the correct one. Changed to direct invocation with `_SV_RESULT` variable
+- **`no_state` return value** — `yb_state_validate` returned empty string instead of `"no_state"` when no manifest entry existed
+
+### New
+- **Bar Sanity section in analysis** — detects unbound items (visible on ALL spaces), duplicate space bindings (item overlaps), and label contamination (log text or unparsed JSON in `_path` labels)
+- **SPACE_IDX numeric validation** in `bar.sh` — rejects non-numeric values (defense against stdout contamination from log functions)
+- **DISPLAY_PATH contamination guard** in `bar.sh` — strips corrupted path labels containing log text
+
 ## v0.6.0 — State manifest: flawless idempotent workspace management
 
 ### New
@@ -21,6 +32,13 @@
 - **Backward compatible** — no state file means `no_state` → existing discovery logic runs unchanged; state is written after first successful CREATE or SWITCH
 
 ## v0.5.1 — Idempotent switch path
+
+### Fixed
+- **REBUILD fallthrough destroying workspaces** — second `yb` run closed all windows and fell through to CREATE, causing "desktops get created, everything starts moving". Removed REBUILD path entirely; replaced with REPAIR that fixes in-place and always exits
+- **Log stdout contamination** — `yb_log` and `bar_log` output to stderr (`>&2`) to prevent command substitutions from capturing log text into variables
+
+### Changed
+- **Switch path collapsed** — FAST PATH (workspace intact → focus only) + REPAIR PATH (fix in-place → never fall through to CREATE); both always exit, never reach CREATE
 
 ## v0.5.0 — BSP tiling, app handlers, multi-workspace bars
 
